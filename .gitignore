@@ -1,3 +1,8 @@
 benchmarks/**
-!benchmarks/*.md
-!benchmarks/VERSION.txt
+# top-level CLAUDE.md only
+!benchmarks/CLAUDE.md
+# descend into each benchmark folder
+!benchmarks/*/
+# only README.md and VERSION.txt in each benchmark
+!benchmarks/*/README.md
+!benchmarks/*/VERSION.txt
