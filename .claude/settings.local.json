@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.alcf.anl.gov)",
+      "WebFetch(domain:geopm.github.io)",
+      "WebFetch(domain:github.com)",
+      "WebSearch"
+    ]
+  }
+}

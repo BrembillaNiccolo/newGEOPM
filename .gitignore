@@ -1,0 +1,3 @@
+benchmarks/**
+!benchmarks/*.md
+!benchmarks/VERSION.txt
