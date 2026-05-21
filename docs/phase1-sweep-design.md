@@ -1,8 +1,10 @@
 # Phase 1 — Knob characterization sweep design
 
-Goal: produce a per-epoch CSV dataset mapping `(benchmark, knob_setting) → (energy, runtime, signals)` so we can (a) identify which signals reliably detect each workload class and (b) rank the controls that actually move the Pareto frontier per class.
+Goal: produce a per-epoch CSV dataset mapping `(benchmark, knob_setting) → (energy, runtime, signals)` so we can (a) identify which signals reliably detect each base workload class and (b) rank the controls that actually move the Pareto frontier per class.
 
 This is the input to the unified-agent design in Phase 2.
+
+Phase 1 is **not** the final proof that the custom GEOPM agent works. It is the knob-discovery phase: use simple base benchmarks to learn which controls matter for CPU compute, CPU memory, GPU compute, GPU memory, MPI communication slack, and bursty idle behavior. Mixed proxy apps and production applications move to later validation phases.
 
 ## Sweep strategy
 
@@ -35,18 +37,17 @@ Knob list reflects what's actually writable on Aurora per `docs/signals_and_cont
 
 | Benchmark | Class | Nodes | Repeats | Notes |
 |-----------|-------|-------|---------|-------|
-| mixbench-SYCL | GPU compute | 1 | 3 | run the full AI sweep inside the benchmark; treat each AI bucket as a separate sub-experiment |
-| oneMKL DGEMM (GPU) | GPU compute | 1 | 3 | large enough M=N=K to saturate one tile (~16k) and to use full card (~32k) — separate runs |
-| Intel HPL (CPU) | CPU compute | 1 | 3 | problem size tuned to ~70% memory footprint of HBM-only mode |
-| STREAM HBM-only | Memory | 1 | 3 | bind to HBM via `numactl --membind=<hbm_node>` |
-| STREAM flat | Memory | 1 | 3 | bind to DDR via `numactl --membind=<ddr_node>` |
-| BabelStream (GPU Triad) | Memory | 1 | 3 | per-tile run + full-card run |
-| OSU `osu_alltoall` | Comm | 4, 8 | 3 each | sweep message sizes 1B..8MB; record at each size |
-| OSU `osu_allreduce` | Comm | 4, 8 | 3 each | same |
-| HPCG | Mixed | 4 | 3 | reference problem size |
-| Quicksilver | Comm (imbalanced) | 8 | 3 | Coral2 input deck |
+| `cpu-dgemm` | CPU compute | 1 | 3 | cheaper CPU compute anchor than HPL; use oneMKL BLAS/sample or a tiny local DGEMM driver |
+| `stream` HBM-only | CPU memory | 1 | 3 | bind to HBM via `numactl --membind=<hbm_node>` |
+| `stream` flat | CPU memory | 1 | 3 | bind to DDR via `numactl --membind=<ddr_node>` |
+| `dgemm-gpu` | GPU compute | 1 | 3 | large enough M=N=K to saturate one tile (~16k) and one full card (~32k) as separate runs |
+| `babelstream` | GPU memory | 1 | 3 | per-tile run + full-card run |
+| OSU `osu_allreduce` | MPI communication | 4, 8 | 3 each | first communication anchor; sweep message sizes 1B..8MB |
+| OSU `osu_alltoall` | MPI communication | 4, 8 | 3 each | optional second communication anchor if allocation time allows |
+| `mpi-idle-wait` | Synthetic communication slack | 1, 4 | 3 each | isolates safe CPU throttling during wait/barrier-like phases |
+| `gpu-bursty-idle` | Synthetic burst/idle | 1 | 3 | isolates always-on GPU frequency savings during idle gaps |
 
-Total Phase 1 cells (1-D pass only): ~10 benchmarks × ~5 knobs × ~5 levels × 3 repeats ≈ 750 runs. Latin-hypercube pass adds ~10 × 30 × 3 = 900 runs. Plan for ~1600-2000 node-hours per node-class.
+Total Phase 1 cells should be recalculated from this base suite once final knob grids are written. The intent is to keep Phase 1 small enough to rank knobs confidently before spending time on mixed and production workloads.
 
 ## Always-on instrumentation
 
@@ -98,9 +99,10 @@ For the 3000 W cap in Phase 3, work in component sum throughout — that's what 
 
 `analysis/phase1-report.md` must contain:
 
-- **Per workload class** (4 sections):
+- **Per base workload class**:
   - Signal detector: which 2-3 signals threshold-classify this class with low false-positive rate (validate on out-of-class benchmarks)
   - Ranked knobs by ΔE / Δt impact
   - Pareto-frontier table (the seed for Phase 2 agent action arms)
 - **Cross-class confusion matrix** for the detector
 - **Open knobs**: which controls turned out to have no measurable effect (drop from Phase 2)
+- **Later-validation recommendation**: which proxy/real benchmarks should be used after Phase 2 for each class based on the Phase 1 results

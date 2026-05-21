@@ -3,6 +3,11 @@ benchmarks/**
 !benchmarks/CLAUDE.md
 # descend into each benchmark folder
 !benchmarks/*/
-# only README.md and VERSION.txt in each benchmark
+# only README.md, VERSION.txt, and Phase 1 deferral markers in each benchmark
 !benchmarks/*/README.md
 !benchmarks/*/VERSION.txt
+!benchmarks/*/DELETE.md
+# phase grouping docs
+!benchmarks/by-phase/
+!benchmarks/by-phase/**/
+!benchmarks/by-phase/**/README.md

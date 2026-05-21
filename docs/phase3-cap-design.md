@@ -1,6 +1,6 @@
 # Phase 3 — Power-cap evaluation (3000 W headline scenario)
 
-Goal: under a **user-chosen per-node cap** (3000 W is our headline scenario; the framework runs at any value), measure how much of the uncapped time-to-solution our unified agent recovers vs the stock `power_governor` baseline.
+Goal: under a **user-chosen per-node cap** (3000 W is our headline scenario; the framework runs at any value), measure how much of the uncapped time-to-solution our unified agent recovers vs the stock `power_governor` baseline, how much energy it saves when no cap is binding, and what those savings imply economically at Aurora scale.
 
 **Two user-tunable knobs** (set per run, not hard-coded):
 - `power_cap_watts` — `BOARD_POWER_LIMIT_CONTROL` value in W. Headline = 3000 W (~60-65 % of Aurora's ~4.5-5 kW peak: 2× Xeon Max ≈ 700 W + 6× PVC ≈ 3600 W + DRAM/network/misc).
@@ -63,22 +63,20 @@ Both biases are just initial arms — the bandit refines them based on observed 
 
 ## Benchmarks
 
-Same 8 from Phase 1 + 2 real-world apps:
+Phase 3 should not simply rerun every Phase 1 base benchmark. Phase 1 ranks knobs on simple workloads; Phase 3 proves whether the custom agent works on held-out validation workloads and selected anchors.
 
 | Benchmark | Phase 3 role |
 |-----------|--------------|
-| mixbench-SYCL | sweeps AI; reports per-AI-regime cap response |
-| oneMKL DGEMM (GPU) | GPU compute-bound headline |
-| Intel HPL (CPU) | CPU compute-bound headline |
-| STREAM (HBM + flat) | memory-bound (expect biggest agent win) |
-| BabelStream (GPU) | GPU memory-bound |
-| OSU `osu_alltoall` + `osu_allreduce` | comm slack regime |
-| HPCG | mixed validation |
-| Quicksilver | comm-imbalanced; `power_balancer`-class win expected |
-| **GROMACS (SYCL)** | end-to-end MD app — Class 1 + Class 4. Local: `benchmarks/gromacs/`. Inputs: `gmxbench-3.0/d.dppc` (1-node), `d.poly-ch2` (multi-node). |
-| **LAMMPS (Kokkos/SYCL)** | end-to-end MD app — Class 1 + Class 4 alternate. Local: `benchmarks/lammps/`. Inputs: `bench/in.rhodo` (1-node), `bench/in.lj` (multi-node). |
+| `stream` and/or `babelstream` | retain one memory anchor if Phase 1 predicts the biggest energy savings there |
+| `dgemm-gpu` and/or `hpl-cpu` | compute anchors for headline cap response; use HPL only after `cpu-dgemm` has characterized CPU knobs |
+| `mixbench` | optional GPU arithmetic-intensity validation after pure GPU compute/memory behavior is understood |
+| OSU `osu_allreduce` / `osu_alltoall` | communication anchor for cap and slack response |
+| `hpcg` | mixed proxy validation; tests whether the agent can combine memory and communication policies |
+| `quicksilver` | communication-imbalance validation; expected to be relevant against `power_balancer` |
+| **GROMACS (SYCL)** | first production MD app. Local: `benchmarks/gromacs/`. Inputs: `gmxbench-3.0/d.dppc` (1-node), `d.poly-ch2` (multi-node). |
+| **LAMMPS (Kokkos/SYCL)** | second production MD app after GROMACS. Local: `benchmarks/lammps/`. Inputs: `bench/in.rhodo` (1-node), `bench/in.lj` (multi-node). |
 
-Node counts mirror Phase 1.
+Node counts should be chosen per validation workload, not copied blindly from Phase 1.
 
 ## Metrics
 
@@ -95,8 +93,20 @@ Per (benchmark, condition, repeat):
 | Throttle time | Σ time `GPU_CORE_THROTTLE_REASONS` non-zero across tiles |
 | Cap-utilization | mean(node_power) / 3000 W — wasted headroom indicator |
 | Per-component split | (CPU energy, DRAM energy, GPU energy) / total — where the budget actually went |
+| Electricity saved | `(E_baseline − E_agent) / 3.6e6` kWh, optionally multiplied by facility PUE |
+| Cost avoided | `electricity_saved_kWh × electricity_price_per_kWh` |
 
 Statistics: 3 repeats per cell, median + IQR.
+
+## Economic framing
+
+The final paper can frame the work as performance recovery plus operational savings:
+
+- **Capped performance**: how much faster jobs run under the same per-node power cap with the custom agent than with stock GEOPM/hardware behavior.
+- **Always-on savings**: how much energy is saved when the cap is not binding while respecting the user's runtime slack.
+- **System-scale money saved**: extrapolate measured kWh savings to Aurora-scale node-hours using an explicit electricity price and PUE assumption.
+
+Keep the cost model transparent and separate from measured control results. Report the formula and assumptions so readers can substitute their own electricity price or facility PUE.
 
 ## Hypothesis (to evaluate, not assume)
 
@@ -124,6 +134,7 @@ Must contain:
 - Headline plot: per-benchmark bar chart of TTS under (uncapped, cap_governor, cap_bandit).
 - Per-class summary: median TTS recovery + IQR.
 - Per-component energy split bar charts → shows whether bandit "spent the budget" differently.
+- Economic projection table: measured kWh saved per workload, assumed electricity price/PUE, and projected cost avoided at selected node-hour scales.
 - Failure analysis: where `aurora_bandit` ≤ `power_governor`, what happened (action trace + signal trace excerpts).
 - Decision: does the bandit warrant scaling up (more nodes, federated) or is a different algorithm needed?
 
