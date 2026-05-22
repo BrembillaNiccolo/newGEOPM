@@ -1,20 +1,8 @@
 {
   "benchmark": "mpi-idle-wait",
-  "description": "Synthetic MPI slack detector/debug workload. Keep only CPU frequency in the first pass.",
-  "variants": ["barrier", "allreduce_skew"],
-  "repeats": 3,
-  "runtime_slack": 0.02,
-  "knobs": [
-    {
-      "name": "CPU_FREQUENCY_MAX_CONTROL",
-      "domain": "core",
-      "instances": "auto",
-      "reason": "Isolates whether wait phases can be throttled safely before noisy real collectives.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "range_70", "kind": "fraction_range", "fraction": 0.70, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
-        {"label": "range_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
-      ]
-    }
-  ]
+  "description": "Phase 1 mpi-idle-wait (synthetic MPI slack) characterization sweep. All strict knobs flipped, 15 s cells, repeats=1.",
+  "variants": ["smoke_15s"],
+  "repeats": 1,
+  "runtime_slack": 0.05,
+  "include_knobs": "../strict_knobs.json"
 }

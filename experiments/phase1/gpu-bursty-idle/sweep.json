@@ -1,20 +1,8 @@
 {
   "benchmark": "gpu-bursty-idle",
-  "description": "Synthetic GPU burst/idle workload. First useful knob is GPU tile frequency only.",
-  "variants": ["sleep_gap", "cpu_gap"],
-  "repeats": 3,
+  "description": "Phase 1 gpu-bursty-idle (synthetic GPU burst/idle) characterization sweep. All strict knobs flipped, 15 s cells, repeats=1.",
+  "variants": ["smoke_15s"],
+  "repeats": 1,
   "runtime_slack": 0.05,
-  "knobs": [
-    {
-      "name": "GPU_CORE_FREQUENCY_MAX_CONTROL",
-      "domain": "gpu_chip",
-      "instances": "auto",
-      "reason": "Tests always-on GPU energy savings during low-activity gaps.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "range_75", "kind": "fraction_range", "fraction": 0.75, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"},
-        {"label": "range_55", "kind": "fraction_range", "fraction": 0.55, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"}
-      ]
-    }
-  ]
+  "include_knobs": "../strict_knobs.json"
 }

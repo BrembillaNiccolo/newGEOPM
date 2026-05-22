@@ -1,42 +1,8 @@
 {
   "benchmark": "stream",
-  "description": "CPU-memory sweep. Keep this small: core freq, uncore max, and DRAM PL1.",
-  "variants": ["hbm", "flat"],
-  "repeats": 3,
+  "description": "Phase 1 STREAM (HBM/DDR) characterization sweep. All strict knobs flipped, 15 s cells, repeats=1.",
+  "variants": ["smoke_15s"],
+  "repeats": 1,
   "runtime_slack": 0.05,
-  "knobs": [
-    {
-      "name": "CPU_FREQUENCY_MAX_CONTROL",
-      "domain": "core",
-      "instances": "auto",
-      "reason": "Expected STREAM win: lower core frequency while bandwidth remains stable.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "range_70", "kind": "fraction_range", "fraction": 0.70, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
-        {"label": "range_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
-      ]
-    },
-    {
-      "name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL",
-      "domain": "package",
-      "instances": "auto",
-      "reason": "Memory bandwidth gate; useful to prove that uncore should stay high for STREAM.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "range_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_UNCORE_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_UNCORE_FREQUENCY_MAX_AVAIL"},
-        {"label": "range_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_UNCORE_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_UNCORE_FREQUENCY_MAX_AVAIL"}
-      ]
-    },
-    {
-      "name": "DRAM_POWER_LIMIT_CONTROL",
-      "domain": "package",
-      "instances": "auto",
-      "reason": "HBM/DRAM RAPL cap; likely less useful than CPU freq but worth a first ranking.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "default_90pct", "kind": "scale_readback", "scale": 0.90},
-        {"label": "default_80pct", "kind": "scale_readback", "scale": 0.80}
-      ]
-    }
-  ]
+  "include_knobs": "../strict_knobs.json"
 }

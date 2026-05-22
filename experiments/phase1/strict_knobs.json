@@ -1,0 +1,404 @@
+{
+  "_description": "Canonical strict-controls list shared by every Phase 1 sweep via include_knobs. 35 knobs (11 power_energy incl. POWERCAP aliases + 24 frequency incl. SST family). Drawn from docs/signals_and_controls/geopm_research_strict_controls.md.",
+  "knobs": [
+    {
+      "name": "BOARD_POWER_LIMIT_CONTROL",
+      "domain": "board",
+      "instances": "auto",
+      "reason": "Whole-node PL1; the headline cap. Literal watts: Aurora's BOARD_POWER_LIMIT_CONTROL defaults to 0.0 (no cap) so scale_readback is a no-op. From a baseline cpu-dgemm smoke, BOARD_POWER ran 1970-2555 W (mean 2444 W); caps below 2400 W bind. lit_3000W is the user's named headline scenario.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_4000W", "kind": "literal", "value": 4000},
+        {"label": "lit_3500W", "kind": "literal", "value": 3500},
+        {"label": "lit_3000W", "kind": "literal", "value": 3000},
+        {"label": "lit_2500W", "kind": "literal", "value": 2500},
+        {"label": "lit_2000W", "kind": "literal", "value": 2000}
+      ]
+    },
+    {
+      "name": "BOARD_POWER_TIME_WINDOW_CONTROL",
+      "domain": "board",
+      "instances": "auto",
+      "reason": "PL1 averaging window for the board cap; affects how aggressively the cap is enforced.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_half", "kind": "scale_readback", "scale": 0.5},
+        {"label": "readback_double", "kind": "scale_readback", "scale": 2.0}
+      ]
+    },
+    {
+      "name": "CPU_POWER_LIMIT_CONTROL",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "RAPL package PL1. Scaled from CPU_POWER_LIMIT_DEFAULT (TDP), the documented baseline.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "tdp_90pct", "kind": "scale_signal", "signal": "CPU_POWER_LIMIT_DEFAULT", "scale": 0.90},
+        {"label": "tdp_75pct", "kind": "scale_signal", "signal": "CPU_POWER_LIMIT_DEFAULT", "scale": 0.75},
+        {"label": "tdp_60pct", "kind": "scale_signal", "signal": "CPU_POWER_LIMIT_DEFAULT", "scale": 0.60}
+      ]
+    },
+    {
+      "name": "CPU_POWER_TIME_WINDOW_CONTROL",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "RAPL PL1 averaging window. Wider = more burst headroom; narrower = tighter cap enforcement.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_half", "kind": "scale_readback", "scale": 0.5},
+        {"label": "readback_double", "kind": "scale_readback", "scale": 2.0}
+      ]
+    },
+    {
+      "name": "DRAM_POWER_LIMIT_CONTROL",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "HBM/DRAM RAPL cap; expected mainly to affect memory-bound workloads, but try on every bench.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_90pct", "kind": "scale_readback", "scale": 0.90},
+        {"label": "readback_75pct", "kind": "scale_readback", "scale": 0.75},
+        {"label": "readback_60pct", "kind": "scale_readback", "scale": 0.60}
+      ]
+    },
+    {
+      "name": "DRAM_POWER_TIME_WINDOW_CONTROL",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "DRAM PL1 averaging window.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_half", "kind": "scale_readback", "scale": 0.5},
+        {"label": "readback_double", "kind": "scale_readback", "scale": 2.0}
+      ]
+    },
+    {
+      "name": "POWERCAP::CPU_POWER_LIMIT",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Linux powercap alias of CPU_POWER_LIMIT_CONTROL. Kept to confirm the alias mapping experimentally.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_90pct", "kind": "scale_readback", "scale": 0.90},
+        {"label": "readback_75pct", "kind": "scale_readback", "scale": 0.75},
+        {"label": "readback_60pct", "kind": "scale_readback", "scale": 0.60}
+      ]
+    },
+    {
+      "name": "POWERCAP::CPU_TIME_WINDOW",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Linux powercap alias of CPU_POWER_TIME_WINDOW_CONTROL.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_half", "kind": "scale_readback", "scale": 0.5},
+        {"label": "readback_double", "kind": "scale_readback", "scale": 2.0}
+      ]
+    },
+    {
+      "name": "POWERCAP::DRAM_POWER_LIMIT",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Linux powercap alias of DRAM_POWER_LIMIT_CONTROL.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_90pct", "kind": "scale_readback", "scale": 0.90},
+        {"label": "readback_75pct", "kind": "scale_readback", "scale": 0.75},
+        {"label": "readback_60pct", "kind": "scale_readback", "scale": 0.60}
+      ]
+    },
+    {
+      "name": "POWERCAP::DRAM_TIME_WINDOW",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Linux powercap alias of DRAM_POWER_TIME_WINDOW_CONTROL.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_half", "kind": "scale_readback", "scale": 0.5},
+        {"label": "readback_double", "kind": "scale_readback", "scale": 2.0}
+      ]
+    },
+    {
+      "name": "GPU_POWER_TIME_WINDOW_CONTROL",
+      "domain": "gpu",
+      "instances": "auto",
+      "reason": "Time window over which DRM::HWMON::POWER1_MAX is sustained on average per GPU card.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "readback_half", "kind": "scale_readback", "scale": 0.5},
+        {"label": "readback_double", "kind": "scale_readback", "scale": 2.0}
+      ]
+    },
+    {
+      "name": "CPU_FREQUENCY_MAX_CONTROL",
+      "domain": "core",
+      "instances": "auto",
+      "reason": "Primary CPU DVFS knob. fraction_range over [MIN_AVAIL, MAX_AVAIL] gives portable levels.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_85", "kind": "fraction_range", "fraction": 0.85, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_70", "kind": "fraction_range", "fraction": 0.70, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_55", "kind": "fraction_range", "fraction": 0.55, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "CPU_FREQUENCY_MIN_CONTROL",
+      "domain": "cpu",
+      "instances": "auto",
+      "reason": "Raising the floor prevents the governor from clocking down during slack; useful for idle-wait benches.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "CPU_FREQUENCY_DESIRED_CONTROL",
+      "domain": "cpu",
+      "instances": "auto",
+      "reason": "Userspace-governor target frequency. Only effective under that governor; may no-op under performance/powersave.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "CPU_FREQUENCY_GOVERNOR_CONTROL",
+      "domain": "cpu",
+      "instances": "auto",
+      "reason": "Categorical: 0=performance, 1=powersave, 2=ondemand, 3=conservative, 4=userspace, 5=schedutil.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_performance", "kind": "literal", "value": 0},
+        {"label": "lit_powersave", "kind": "literal", "value": 1}
+      ]
+    },
+    {
+      "name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Memory-bandwidth gate. STREAM-style workloads usually need uncore high; this proves/disproves that.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_UNCORE_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_UNCORE_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_UNCORE_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_UNCORE_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "CPU_UNCORE_FREQUENCY_MIN_CONTROL",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Raise the uncore floor to keep memory bandwidth available during idle bursts.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "CPU_UNCORE_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_UNCORE_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_UNCORE_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_UNCORE_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "GPU_CORE_FREQUENCY_MAX_CONTROL",
+      "domain": "gpu_chip",
+      "instances": "auto",
+      "reason": "Primary GPU DVFS knob (RPS). Worth flipping on CPU-only benches too to measure node-level savings.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_85", "kind": "fraction_range", "fraction": 0.85, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_70", "kind": "fraction_range", "fraction": 0.70, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_55", "kind": "fraction_range", "fraction": 0.55, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "GPU_CORE_FREQUENCY_MIN_CONTROL",
+      "domain": "gpu_chip",
+      "instances": "auto",
+      "reason": "GPU frequency floor; useful when the GPU goes idle in bursty kernels.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL",
+      "domain": "gpu_chip",
+      "instances": "auto",
+      "reason": "PVC Performance Factor. 0.0 favors power saving, 1.0 favors max performance. Verify safe range before writing.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_0_0", "kind": "literal", "value": 0.0},
+        {"label": "lit_0_5", "kind": "literal", "value": 0.5},
+        {"label": "lit_1_0", "kind": "literal", "value": 1.0}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY_ENABLE:ENABLE",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "SST-CP master enable. Disabling also disables SST-TF.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_off", "kind": "literal", "value": 0},
+        {"label": "lit_on", "kind": "literal", "value": 1}
+      ]
+    },
+    {
+      "name": "SST::TURBO_ENABLE:ENABLE",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "SST-TF turbo-frequency enable. Enabling also enables SST-CP.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_off", "kind": "literal", "value": 0},
+        {"label": "lit_on", "kind": "literal", "value": 1}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:ASSOCIATION",
+      "domain": "core",
+      "instances": "auto",
+      "reason": "Per-core SST-CP priority-level assignment (0..3).",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_pri0", "kind": "literal", "value": 0},
+        {"label": "lit_pri1", "kind": "literal", "value": 1}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:0:FREQUENCY_MAX",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Max frequency for cores assigned to SST-CP priority level 0.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:0:FREQUENCY_MIN",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Min frequency for cores assigned to SST-CP priority level 0.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:0:PRIORITY",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Proportional priority for SST-CP level 0. Lower = larger share of surplus power.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_0_0", "kind": "literal", "value": 0.0},
+        {"label": "lit_0_5", "kind": "literal", "value": 0.5},
+        {"label": "lit_1_0", "kind": "literal", "value": 1.0}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:1:FREQUENCY_MAX",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Max frequency for cores assigned to SST-CP priority level 1.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:1:FREQUENCY_MIN",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Min frequency for cores assigned to SST-CP priority level 1.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:1:PRIORITY",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Proportional priority for SST-CP level 1.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_0_0", "kind": "literal", "value": 0.0},
+        {"label": "lit_0_5", "kind": "literal", "value": 0.5},
+        {"label": "lit_1_0", "kind": "literal", "value": 1.0}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:2:FREQUENCY_MAX",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Max frequency for cores assigned to SST-CP priority level 2.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:2:FREQUENCY_MIN",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Min frequency for cores assigned to SST-CP priority level 2.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:2:PRIORITY",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Proportional priority for SST-CP level 2.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_0_0", "kind": "literal", "value": 0.0},
+        {"label": "lit_0_5", "kind": "literal", "value": 0.5},
+        {"label": "lit_1_0", "kind": "literal", "value": 1.0}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:3:FREQUENCY_MAX",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Max frequency for cores assigned to SST-CP priority level 3.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:3:FREQUENCY_MIN",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Min frequency for cores assigned to SST-CP priority level 3.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "frac_30", "kind": "fraction_range", "fraction": 0.30, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "frac_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "SST::COREPRIORITY:3:PRIORITY",
+      "domain": "package",
+      "instances": "auto",
+      "reason": "Proportional priority for SST-CP level 3.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "lit_0_0", "kind": "literal", "value": 0.0},
+        {"label": "lit_0_5", "kind": "literal", "value": 0.5},
+        {"label": "lit_1_0", "kind": "literal", "value": 1.0}
+      ]
+    }
+  ]
+}

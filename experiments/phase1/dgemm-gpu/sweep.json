@@ -1,30 +1,8 @@
 {
   "benchmark": "dgemm-gpu",
-  "description": "GPU-compute anchor. Start with GPU tile frequency; add CPU package PL1 as an indirect budget split check.",
-  "variants": ["single_tile", "single_card"],
-  "repeats": 3,
+  "description": "Phase 1 dgemm-gpu (SYCL on PVC) characterization sweep. All strict knobs flipped, 15 s cells, repeats=1.",
+  "variants": ["smoke_15s"],
+  "repeats": 1,
   "runtime_slack": 0.05,
-  "knobs": [
-    {
-      "name": "GPU_CORE_FREQUENCY_MAX_CONTROL",
-      "domain": "gpu_chip",
-      "instances": "auto",
-      "reason": "Primary writable GPU lever on Aurora because GPU power cap itself is not writable.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "range_85", "kind": "fraction_range", "fraction": 0.85, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"},
-        {"label": "range_70", "kind": "fraction_range", "fraction": 0.70, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"}
-      ]
-    },
-    {
-      "name": "CPU_POWER_LIMIT_CONTROL",
-      "domain": "package",
-      "instances": "auto",
-      "reason": "Indirect GPU budget experiment under board cap: reduce CPU share when GPU does the work.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "default_80pct", "kind": "scale_signal", "signal": "CPU_POWER_LIMIT_DEFAULT", "scale": 0.80}
-      ]
-    }
-  ]
+  "include_knobs": "../strict_knobs.json"
 }

@@ -1,31 +1,8 @@
 {
   "benchmark": "cpu-dgemm",
-  "description": "Phase 0/1 CPU-compute anchor. Start with CPU frequency and package PL1 only.",
-  "variants": ["phase0"],
-  "repeats": 3,
+  "description": "Phase 1 cpu-dgemm characterization sweep. All strict knobs flipped, 15 s cells, repeats=1.",
+  "variants": ["smoke_15s"],
+  "repeats": 1,
   "runtime_slack": 0.05,
-  "knobs": [
-    {
-      "name": "CPU_FREQUENCY_MAX_CONTROL",
-      "domain": "core",
-      "instances": "auto",
-      "reason": "Primary CPU-compute DVFS knob; expected to trade package energy for runtime.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "range_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
-        {"label": "range_60", "kind": "fraction_range", "fraction": 0.60, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
-      ]
-    },
-    {
-      "name": "CPU_POWER_LIMIT_CONTROL",
-      "domain": "package",
-      "instances": "auto",
-      "reason": "RAPL package PL1; useful if power limiting performs cleaner than direct frequency limiting.",
-      "levels": [
-        {"label": "default", "kind": "default"},
-        {"label": "default_90pct", "kind": "scale_signal", "signal": "CPU_POWER_LIMIT_DEFAULT", "scale": 0.90},
-        {"label": "default_80pct", "kind": "scale_signal", "signal": "CPU_POWER_LIMIT_DEFAULT", "scale": 0.80}
-      ]
-    }
-  ]
+  "include_knobs": "../strict_knobs.json"
 }

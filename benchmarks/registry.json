@@ -21,6 +21,18 @@
         },
         "aurora": {
           "args": "--m 8192 --n 8192 --k 8192 --iters 5 --block 96"
+        },
+        "smoke_60s": {
+          "_note": "Naive blocked OpenMP DGEMM (no MKL). 4096^3 = 137 GFLOP/iter; assume 80-400 GF/s aggregate on a Xeon Max node -> 40 iters lands roughly in [15, 70] s. Re-tune iters after first real run.",
+          "args": "--m 4096 --n 4096 --k 4096 --iters 40 --block 64"
+        },
+        "smoke_15s": {
+          "_note": "~15 s target: 10 iters of 4096^3 (~1.37 TFLOP total at ~80-400 GF/s aggregate). Re-tune after first real run.",
+          "args": "--m 4096 --n 4096 --k 4096 --iters 10 --block 64"
+        },
+        "all_tiles_15s": {
+          "_note": "CPU bench -- 'all tiles' is meaningless here; alias of smoke_15s so one VARIANT env works across all benches in submit_phase0_all.pbs.",
+          "args": "--m 4096 --n 4096 --k 4096 --iters 10 --block 64"
         }
       },
       "metric_keys": ["runtime_s", "avg_iter_s", "avg_gflops", "best_gflops", "checksum"]
@@ -49,6 +61,18 @@
         },
         "flat": {
           "prefix": "numactl --membind=${DDR_NUMA_NODE}",
+          "args": ""
+        },
+        "smoke_60s": {
+          "_note": "STREAM size is build-time (STREAM_ARRAY_SIZE, STREAM_NTIMES). For a ~60s run on HBM (~1 TB/s/socket), build with STREAM_ARRAY_SIZE=268435456 STREAM_NTIMES=20000 (one binary serves all variants).",
+          "args": ""
+        },
+        "smoke_15s": {
+          "_note": "~15 s target: build with STREAM_ARRAY_SIZE=268435456 STREAM_NTIMES=5000 (one binary serves all variants).",
+          "args": ""
+        },
+        "all_tiles_15s": {
+          "_note": "CPU bench -- alias of smoke_15s so one VARIANT env works across all benches.",
           "args": ""
         }
       },
@@ -80,6 +104,23 @@
         "single_card": {
           "env": {"ZE_AFFINITY_MASK": "0"},
           "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 10"
+        },
+        "smoke_60s": {
+          "_note": "All 12 PVC tiles concurrently for ~60 s wall. 12 MPI ranks * 200 iters of 4096^3 each. Per-tile time ~30-90 s; aggregate ~12x.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 200"
+        },
+        "smoke_15s": {
+          "_note": "~15 s target on one PVC tile: 50 iters of 4096^3.",
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 50"
+        },
+        "all_tiles_15s": {
+          "_note": "All 12 PVC tiles concurrently. 12 MPI ranks * 50 iters of 4096^3 each. Each tile has independent HBM stack -> no contention; wall ~= per-tile time ~15 s, aggregate work ~12x.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 50"
         }
       },
       "metric_keys": ["runtime_s", "gflops"]
@@ -110,6 +151,23 @@
         "single_card": {
           "env": {"ZE_AFFINITY_MASK": "0"},
           "args": "-s 536870912 --iters 20"
+        },
+        "smoke_60s": {
+          "_note": "All 12 PVC tiles concurrently. Each rank does 7000 iters of 2 GiB Triad on its tile (~30-90 s). Per-tile HBM is independent -> ~60 s wall, ~12x aggregate BW.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "-s 268435456 --iters 7000"
+        },
+        "smoke_15s": {
+          "_note": "~15 s target on one PVC tile: 1800 iters of the same Triad size.",
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "-s 268435456 --iters 1800"
+        },
+        "all_tiles_15s": {
+          "_note": "All 12 PVC tiles concurrently. 12 ranks * 1800 iters of 2 GiB Triad each. Per-tile HBM is independent -> ~15 s wall, ~12x aggregate BW.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "-s 268435456 --iters 1800"
         }
       },
       "metric_keys": ["runtime_s", "triad_bandwidth_mb_s"]
@@ -139,6 +197,21 @@
         "alltoall_4node": {
           "launcher": "mpiexec -n 32",
           "args": "--collective alltoall -m 1:8388608 --iters 100 --warmup 10"
+        },
+        "smoke_60s": {
+          "_note": "Intra-node allreduce only. 12 ranks default (override via MPI_RANKS). Message range up to 32 MiB; --iters 4000 is a rough target for [40, 90] s. Least confident sizing — re-tune after first run.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--collective allreduce -m 1:33554432 --iters 4000 --warmup 50"
+        },
+        "smoke_15s": {
+          "_note": "~15 s target intra-node allreduce: 200 iters. (Was 1000 -> 80 s; cut 5x after first run.)",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--collective allreduce -m 1:33554432 --iters 200 --warmup 10"
+        },
+        "all_tiles_15s": {
+          "_note": "MPI bench -- alias of smoke_15s so one VARIANT env works across all benches.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--collective allreduce -m 1:33554432 --iters 200 --warmup 10"
         }
       },
       "metric_keys": ["runtime_s", "latency_us"]
@@ -164,6 +237,21 @@
         "allreduce_skew": {
           "launcher": "mpiexec -n ${MPI_RANKS:-32}",
           "args": "--compute-ms 20 --wait-ms 80 --skew-rank 0 --iterations 500 --mode allreduce"
+        },
+        "smoke_60s": {
+          "_note": "Deterministic ~60 s: 1000 iter * (30 ms compute + 30 ms wait) = 60 s. 12 ranks default; override via MPI_RANKS.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--compute-ms 30 --wait-ms 30 --iterations 1000 --mode barrier"
+        },
+        "smoke_15s": {
+          "_note": "Deterministic ~15 s: 250 iter * (30 ms compute + 30 ms wait) = 15 s.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--compute-ms 30 --wait-ms 30 --iterations 250 --mode barrier"
+        },
+        "all_tiles_15s": {
+          "_note": "MPI bench -- alias of smoke_15s so one VARIANT env works across all benches.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--compute-ms 30 --wait-ms 30 --iterations 250 --mode barrier"
         }
       },
       "metric_keys": ["runtime_s", "compute_s", "wait_s"]
@@ -190,6 +278,23 @@
         "cpu_gap": {
           "env": {"ZE_AFFINITY_MASK": "0"},
           "args": "--kernel-ms 20 --gap-ms 80 --iterations 500 --gap-mode cpu"
+        },
+        "smoke_60s": {
+          "_note": "All 12 PVC tiles concurrently. Deterministic ~60 s wall (1000 iter * 60 ms). 12 tiles in lockstep bursting then idling -- best workload for measuring full-node GPU idle-power leakage vs gap-mode.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "--kernel-ms 30 --gap-ms 30 --iterations 1000 --gap-mode sleep --elements 4194304"
+        },
+        "smoke_15s": {
+          "_note": "Deterministic ~15 s: 250 iter * (30 ms kernel + 30 ms sleep gap) = 15 s. Single PVC tile.",
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "--kernel-ms 30 --gap-ms 30 --iterations 250 --gap-mode sleep --elements 4194304"
+        },
+        "all_tiles_15s": {
+          "_note": "All 12 PVC tiles concurrently. Deterministic ~15 s wall (250 iter * 60 ms = 15 s) but with 12 tiles in lockstep bursting then idling -- best workload for measuring GPU idle-power leakage vs gap-mode.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "--kernel-ms 30 --gap-ms 30 --iterations 250 --gap-mode sleep --elements 4194304"
         }
       },
       "metric_keys": ["runtime_s", "kernel_s", "gap_s"]
