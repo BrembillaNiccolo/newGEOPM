@@ -14,6 +14,7 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -228,9 +229,14 @@ def parse_key_value_metrics(stdout):
 
 def parse_trace_energy(run_dir):
     trace_paths = sorted(
-        path for path in run_dir.glob("trace.csv*")
+        path for path in run_dir.glob("geopmsession_trace.csv*")
         if path.is_file() and not path.name.endswith(".json")
     )
+    if not trace_paths:
+        trace_paths = sorted(
+            path for path in run_dir.glob("trace.csv*")
+            if path.is_file() and not path.name.endswith(".json")
+        )
     if not trace_paths:
         trace_paths = sorted(run_dir.glob("geopm.trace*"))
 
@@ -252,7 +258,7 @@ def parse_trace_energy(run_dir):
                     continue
                 if header is None:
                     delimiter = "|" if "|" in line else ","
-                    header = [part.strip() for part in line.split(delimiter)]
+                    header = [part.strip().strip('"') for part in line.split(delimiter)]
                     continue
                 values = line.split(delimiter)
                 if len(values) != len(header):
@@ -283,7 +289,11 @@ def parse_trace_energy(run_dir):
                 cpu_energy += delta
             elif key == "DRAM_ENERGY":
                 dram_energy += delta
-            elif "GPU" in key:
+            elif key == "GPU_ENERGY":
+                # Board-level GPU_ENERGY is the SUM across 6 cards -> use it.
+                # Per-tile GPU_CORE_ENERGY columns are also in the trace; skip them
+                # to avoid double-counting (the card-level GPU_ENERGY already covers
+                # the tiles underneath).
                 gpu_energy += delta
             elif key == "BOARD_ENERGY":
                 board_energy += delta
@@ -321,28 +331,222 @@ def build_plain_command(entry, variant):
     return launcher + prefix + binary + args, env
 
 
-def build_geopm_monitor_command(entry, variant, run_dir, period):
-    env = os.environ.copy()
-    env.update({key: shell_expand(value) for key, value in entry.get("default_env", {}).items()})
-    env.update({key: shell_expand(value) for key, value in variant.get("env", {}).items()})
+# Curated telemetry signal set for the geopmsession sidecar trace.
+# Each line in geopmsession.signals is "SIGNAL DOMAIN INSTANCE".
+# We query at board domain so the trace has one column per signal regardless
+# of how many packages/chips exist; geopmsession skips signals it can't read.
+PREFERRED_SIDECAR_SIGNALS = (
+    "TIME",
+    "BOARD_POWER",
+    "BOARD_ENERGY",
+    "CPU_POWER",
+    "CPU_ENERGY",
+    "DRAM_POWER",
+    "DRAM_ENERGY",
+    "GPU_POWER",            # native domain "gpu" (per-card); summed across 6 cards at board
+    "GPU_ENERGY",           # native domain "gpu" (per-card); summed at board
+    "CPU_FREQUENCY_STATUS",
+    "CPU_UNCORE_FREQUENCY_STATUS",
+    "CPU_PACKAGE_TEMPERATURE",
+)
 
-    launcher = split_words(variant.get("launcher")) or ["mpiexec", "-n", "1"]
-    prefix = split_words(variant.get("prefix"))
-    binary = split_words(entry["binary"])
-    args = split_words(variant.get("args"))
-    return (
-        ["geopmlaunch", launcher[0],
-         "--geopm-agent=monitor",
-         f"--geopm-report={run_dir / 'report.yaml'}",
-         f"--geopm-trace={run_dir / 'trace.csv'}",
-         f"--geopm-period={period:.6f}",
-         "--"]
-        + launcher[1:]
-        + prefix
-        + binary
-        + args,
-        env,
-    )
+# Per-tile (gpu_chip) signals: emit one column per tile (12 columns each on Aurora)
+# so we can see which tile is busy / hot / drawing energy. Otherwise board-level
+# average hides per-tile imbalance and a single idle GPU tile vanishes in the mean.
+PER_TILE_SIGNALS = (
+    "GPU_UTILIZATION",
+    "GPU_CORE_ACTIVITY",
+    "GPU_UNCORE_ACTIVITY",
+    "GPU_CORE_ENERGY",
+    "GPU_CORE_FREQUENCY_STATUS",
+)
+
+# Aurora compute node = 6 PVC cards * 2 tiles. Override with GEOPM_DOMAIN_GPU_CHIP_COUNT
+# if running on different hardware.
+N_GPU_CHIPS_DEFAULT = 12
+
+
+def _smoke_test_invocation(argv):
+    try:
+        proc = subprocess.run(
+            argv + ["--help"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def geopm_tool_invocation(tool_name):
+    """Return argv prefix for invoking a geopm tool that actually runs.
+
+    Aurora ships /usr/bin/geopm{read,write,session} as Python entry-point
+    scripts shebanged `#!/usr/bin/python3` (Python 3.6.15). With geopm modules
+    loaded, PYTHONPATH includes setuptools built for Python 3.10 (walrus
+    operator) so the shebang crashes with SyntaxError. Bypassing via the
+    current interpreter (python/3.10.14 module) works there. On a stock
+    environment without modules the bypass can fail because the loaded
+    interpreter can't find the geopmdpy package - so probe both and pick
+    whichever responds to --help.
+    """
+    path = shutil.which(tool_name)
+    if path is None:
+        return None
+    candidates = []
+    try:
+        with open(path, "rb") as stream:
+            head = stream.read(64)
+        if head.startswith(b"#!") and b"python" in head:
+            candidates.append([sys.executable, path])
+    except OSError:
+        pass
+    candidates.append([path])
+    for argv in candidates:
+        if _smoke_test_invocation(argv):
+            return argv
+    return candidates[-1]  # Last-resort: return something so callers can attempt and log errors
+
+
+def discover_readable_signals(candidates, domain="board", instance="0"):
+    """Probe geopmread at the given domain:instance for each candidate; return the rc=0 ones."""
+    invocation = geopm_tool_invocation("geopmread")
+    if invocation is None:
+        return []
+    ok = []
+    for sig in candidates:
+        try:
+            proc = subprocess.run(
+                invocation + [sig, domain, str(instance)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                ok.append(sig)
+        except (subprocess.TimeoutExpired, Exception):
+            continue
+    return ok
+
+
+def write_signals_file(path, board_signals, per_tile_signals=None, n_gpu_chips=N_GPU_CHIPS_DEFAULT):
+    """Write a geopmsession signals file.
+
+    `board_signals`: list of signal names queried at board:0 (one column each).
+    `per_tile_signals`: list of signal names queried at gpu_chip:0..n-1
+                       (n_gpu_chips columns each).
+    """
+    per_tile_signals = per_tile_signals or []
+    with path.open("w", encoding="utf-8") as stream:
+        if not board_signals and not per_tile_signals:
+            # Always include TIME so the trace at least has timestamps.
+            stream.write("TIME board 0\n")
+            return
+        for sig in board_signals:
+            stream.write(f"{sig} board 0\n")
+        for sig in per_tile_signals:
+            for chip in range(n_gpu_chips):
+                stream.write(f"{sig} gpu_chip {chip}\n")
+
+
+def geopmsession_available():
+    """True only if geopmsession actually runs (smoke-tests --help).
+
+    On Aurora, /usr/bin/geopmsession can be present but broken because the
+    Python `geopmdpy` package isn't installed for the current interpreter
+    (module hierarchy conflict: py-geopmdpy/3.2.2 needs oneapi/release/2025.3.1
+    but our default stack uses oneapi/release/2025.2.0). Smoke-test rather
+    than trust shutil.which().
+    """
+    invocation = geopm_tool_invocation("geopmsession")
+    if invocation is None:
+        return False
+    return _smoke_test_invocation(invocation)
+
+
+def start_geopmsession_sidecar(run_dir, period, bench_pid, signal_names, per_tile_signals=None, n_gpu_chips=N_GPU_CHIPS_DEFAULT):
+    signals_path = run_dir / "geopmsession.signals"
+    write_signals_file(signals_path, signal_names, per_tile_signals, n_gpu_chips)
+    invocation = geopm_tool_invocation("geopmsession") or ["geopmsession"]
+    cmd = invocation + [
+        "-i", str(signals_path),
+        "-p", f"{period:.6f}",
+        "--pid", str(bench_pid),
+        "-o", str(run_dir / "geopmsession_trace.csv"),
+        "-r", str(run_dir / "geopmsession_report.yaml"),
+    ]
+    stdout_log = (run_dir / "geopmsession.stdout").open("w", encoding="utf-8")
+    stderr_log = (run_dir / "geopmsession.stderr").open("w", encoding="utf-8")
+    proc = subprocess.Popen(cmd, stdout=stdout_log, stderr=stderr_log, text=True)
+    return proc, stdout_log, stderr_log, cmd
+
+
+def stop_geopmsession_sidecar(proc, stdout_log, stderr_log, natural_exit_timeout=10):
+    """Let geopmsession exit naturally first; only SIGTERM as fallback.
+
+    geopmsession with --pid exits on its own once the tracked bench dies, and
+    that natural-exit path is the only one that produces the YAML summary
+    report (`-r FILE`). SIGTERM flushes the trace.csv buffer but skips the
+    report write. So we wait up to `natural_exit_timeout` seconds for the
+    --pid detector to fire, then escalate to SIGTERM then SIGKILL.
+    """
+    if proc.poll() is None:
+        try:
+            proc.wait(timeout=natural_exit_timeout)
+        except subprocess.TimeoutExpired:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+    stdout_log.close()
+    stderr_log.close()
+    return proc.returncode
+
+
+def build_walker_schedule(sweep, interval_s):
+    flips = []
+    for knob in sweep["knobs"]:
+        for level in knob["levels"]:
+            if level.get("kind") == "default":
+                continue
+            flips.append({"knob": knob, "level": level})
+    return {"interval_s": interval_s, "flips": flips, "loop": False}
+
+
+def start_knob_walker(args, sweep, run_dir):
+    if args.knob_walker == "auto":
+        schedule = build_walker_schedule(sweep, args.knob_walker_interval_s)
+    else:
+        schedule = json.loads(Path(args.knob_walker).read_text(encoding="utf-8"))
+    schedule_path = run_dir / "knob_walker_schedule.json"
+    dump_json(schedule_path, schedule)
+
+    walker_cmd = [
+        sys.executable,
+        str(Path(__file__).with_name("knob_walker.py")),
+        "--schedule", str(schedule_path),
+        "--run-dir", str(run_dir),
+        "--interval-s", f"{args.knob_walker_interval_s}",
+    ]
+    if args.apply_controls:
+        walker_cmd.append("--apply-controls")
+
+    stdout_log = (run_dir / "knob_walker.stdout").open("w", encoding="utf-8")
+    stderr_log = (run_dir / "knob_walker.stderr").open("w", encoding="utf-8")
+    walker = subprocess.Popen(walker_cmd, stdout=stdout_log, stderr=stderr_log, text=True)
+    return walker, stdout_log, stderr_log
+
+
+def stop_knob_walker(walker, stdout_log, stderr_log):
+    if walker.poll() is None:
+        walker.send_signal(signal.SIGTERM)
+        try:
+            walker.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            walker.kill()
+            walker.wait(timeout=10)
+    stdout_log.close()
+    stderr_log.close()
 
 
 def run_cell(args, registry, sweep, knob, level, variant_name, repeat):
@@ -351,6 +555,9 @@ def run_cell(args, registry, sweep, knob, level, variant_name, repeat):
     variant = entry["variants"][variant_name]
 
     run_root = Path(args.run_root or f"experiments/phase1/{bench}/runs")
+    if args.run_tag:
+        safe_tag = args.run_tag.replace("/", "_")
+        run_root = run_root / safe_tag
     cell_id = f"{variant_name}__{knob['name']}__{level['label']}__r{repeat}"
     safe_cell_id = cell_id.replace(":", "_").replace("/", "_")
     run_dir = run_root / safe_cell_id
@@ -358,12 +565,18 @@ def run_cell(args, registry, sweep, knob, level, variant_name, repeat):
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.geopm_monitor:
-        command, env = build_geopm_monitor_command(entry, variant, run_dir, args.geopm_period)
-    else:
-        command, env = build_plain_command(entry, variant)
+    # Plain mpiexec for the bench in both monitor and non-monitor modes.
+    # Monitor mode wraps with a geopmsession sidecar (started after bench Popen).
+    command, env = build_plain_command(entry, variant)
+    sidecar_enabled = bool(args.geopm_monitor) and geopmsession_available()
+    sidecar_skipped_reason = ""
+    if args.geopm_monitor and not sidecar_enabled:
+        sidecar_skipped_reason = "geopmsession not on PATH; running bench without telemetry sidecar"
 
-    control_session = GeopmControlSession(args.apply_controls)
+    # When --knob-walker is active, the walker owns knob control; the per-cell
+    # GeopmControlSession is bypassed so the two don't fight over geopmwrite.
+    walker_driven = args.knob_walker is not None
+    control_session = GeopmControlSession(args.apply_controls and not walker_driven)
     meta = {  # type: Dict[str, Any]
         "benchmark": bench,
         "workload_type": entry["workload_type"],
@@ -380,6 +593,10 @@ def run_cell(args, registry, sweep, knob, level, variant_name, repeat):
         "platform": platform.platform(),
         "apply_controls": args.apply_controls,
         "geopm_monitor": args.geopm_monitor,
+        "sidecar_enabled": sidecar_enabled,
+        "sidecar_skipped_reason": sidecar_skipped_reason,
+        "knob_walker": walker_driven,
+        "knob_walker_interval_s": args.knob_walker_interval_s if walker_driven else None,
     }
     dump_json(run_dir / "meta.json", meta)
 
@@ -388,17 +605,72 @@ def run_cell(args, registry, sweep, knob, level, variant_name, repeat):
     stdout = ""
     stderr = ""
     restored = []  # type: List[Dict[str, Any]]
+    walker = None
+    walker_stdout = None
+    walker_stderr = None
+    sidecar = None
+    sidecar_stdout = None
+    sidecar_stderr = None
+    sidecar_cmd = None
+    sidecar_rc = None
     try:
         control_session.apply(knob, level)
+        if walker_driven:
+            walker, walker_stdout, walker_stderr = start_knob_walker(args, sweep, run_dir)
         if args.dry_run:
+            # Give the walker a chance to log at least one flip even in dry-run.
+            if walker_driven:
+                time.sleep(max(1.0, args.knob_walker_interval_s))
             return_code = 0
             stdout = "dry_run=1\n"
         else:
-            proc = subprocess.run(command, env=env, text=True, capture_output=True)
-            return_code = proc.returncode
-            stdout = proc.stdout
-            stderr = proc.stderr
+            bench = None
+            try:
+                bench_stdout_path = run_dir / "stdout.log"
+                bench_stderr_path = run_dir / "stderr.log"
+                with bench_stdout_path.open("w", encoding="utf-8") as out_f, \
+                     bench_stderr_path.open("w", encoding="utf-8") as err_f:
+                    bench = subprocess.Popen(command, env=env, stdout=out_f, stderr=err_f, text=True)
+                    if sidecar_enabled:
+                        sidecar, sidecar_stdout, sidecar_stderr, sidecar_cmd = \
+                            start_geopmsession_sidecar(
+                                run_dir, args.geopm_period, bench.pid,
+                                args._sidecar_signals,
+                                args._sidecar_per_tile_signals,
+                                args._sidecar_n_gpu_chips,
+                            )
+                    try:
+                        return_code = bench.wait()
+                    except KeyboardInterrupt:
+                        # Interrupt during bench: terminate bench cleanly so subsequent
+                        # processing (and the sidecar's SIGTERM in `finally`) still produces
+                        # the geopmsession YAML report for whatever was sampled.
+                        if bench.poll() is None:
+                            bench.send_signal(signal.SIGTERM)
+                            try:
+                                return_code = bench.wait(timeout=30)
+                            except subprocess.TimeoutExpired:
+                                bench.kill()
+                                return_code = bench.wait(timeout=10)
+                        raise  # let main() see the interrupt
+                stdout = bench_stdout_path.read_text(encoding="utf-8", errors="replace")
+                stderr = bench_stderr_path.read_text(encoding="utf-8", errors="replace")
+            except FileNotFoundError as exc:
+                return_code = 127
+                stderr = f"executable not found: {exc}\n"
+            except KeyboardInterrupt:
+                # re-raise after the with-block has closed the bench output files
+                stdout = bench_stdout_path.read_text(encoding="utf-8", errors="replace") if bench_stdout_path.exists() else ""
+                stderr = (bench_stderr_path.read_text(encoding="utf-8", errors="replace") if bench_stderr_path.exists() else "") + "\n[interrupted by signal]\n"
+                raise
+            except Exception as exc:
+                return_code = -2
+                stderr = f"launch error: {type(exc).__name__}: {exc}\n"
     finally:
+        if sidecar is not None:
+            sidecar_rc = stop_geopmsession_sidecar(sidecar, sidecar_stdout, sidecar_stderr)
+        if walker is not None:
+            stop_knob_walker(walker, walker_stdout, walker_stderr)
         restored = control_session.restore()
 
     elapsed = time.monotonic() - start
@@ -418,6 +690,8 @@ def run_cell(args, registry, sweep, knob, level, variant_name, repeat):
         "control_writes": control_session.write_log,
         "control_restore": restored,
         "metrics_path": str(run_dir / "metrics.json"),
+        "sidecar_command": format_command(sidecar_cmd) if sidecar_cmd else "",
+        "sidecar_returncode": sidecar_rc,
     })
     dump_json(run_dir / "meta.json", meta)
 
@@ -475,6 +749,9 @@ def main() -> int:
     parser.add_argument("--registry", default="benchmarks/registry.json")
     parser.add_argument("--sweep", help="Sweep JSON path; default experiments/phase1/<benchmark>/sweep.json")
     parser.add_argument("--run-root", help="Override runs output directory")
+    parser.add_argument("--run-tag", default="",
+                        help="Optional subfolder under runs/ to isolate this submission's cells "
+                             "(e.g. PBS job id). Lets you keep multiple runs and average across them.")
     parser.add_argument("--variant", help="Run only one variant")
     parser.add_argument("--knob", help="Run only one knob")
     parser.add_argument("--level", help="Run only one level label")
@@ -485,6 +762,12 @@ def main() -> int:
     parser.add_argument("--apply-controls", action="store_true", help="Actually write GEOPM controls with geopmwrite")
     parser.add_argument("--geopm-monitor", action="store_true", help="Wrap run in geopmlaunch monitor and emit trace/report")
     parser.add_argument("--geopm-period", type=float, default=0.02)
+    parser.add_argument("--knob-walker", nargs="?", const="auto", default=None,
+                        help="Run scripts/knob_walker.py alongside the benchmark. "
+                             "Pass a schedule.json path, or omit value for 'auto' "
+                             "(derive schedule from sweep.json non-default levels).")
+    parser.add_argument("--knob-walker-interval-s", type=float, default=5.0,
+                        help="Seconds to hold each knob flip when --knob-walker is active")
     parser.add_argument("--summary-csv", default="", help="Optional path for a CSV summary of launched cells")
     args = parser.parse_args()
 
@@ -501,19 +784,59 @@ def main() -> int:
     if sweep["benchmark"] != args.benchmark:
         raise SystemExit(f"Sweep file {sweep_path} is for {sweep['benchmark']}, not {args.benchmark}")
 
-    rows = []
-    for knob, level, variant, repeat in iter_cells(args, sweep):
-        print(f"[cell] {args.benchmark} variant={variant} knob={knob['name']} level={level['label']} repeat={repeat}")
-        row = run_cell(args, registry, sweep, knob, level, variant, repeat)
-        print(f"[done] rc={row['returncode']} runtime_s={row['runtime_s']} dir={row['run_dir']}")
-        rows.append(row)
-        if row["returncode"] != 0:
-            print(f"[warn] non-zero return code for {row['run_dir']}", file=sys.stderr)
+    # Resolve include_knobs: prepend the shared list's knobs to any per-sweep ones.
+    include_ref = sweep.get("include_knobs")
+    if include_ref:
+        include_path = (sweep_path.parent / include_ref).resolve()
+        included = load_json(include_path)
+        sweep["knobs"] = list(included.get("knobs", [])) + list(sweep.get("knobs", []))
+        sweep["_include_knobs_resolved"] = str(include_path)
 
-    summary_path = Path(args.summary_csv) if args.summary_csv else Path(f"experiments/phase1/{args.benchmark}/last_run_summary.csv")
-    write_summary_csv(summary_path, rows)
-    print(f"[summary] {summary_path}")
-    return 0 if all(row["returncode"] == 0 for row in rows) else 1
+    # One-shot signal discovery for the sidecar. Probe board signals at board:0 and
+    # per-tile signals at gpu_chip:0; keep only the readable ones so geopmsession
+    # doesn't bail on unknown names.
+    args._sidecar_signals = []
+    args._sidecar_per_tile_signals = []
+    args._sidecar_n_gpu_chips = int(os.environ.get("GEOPM_DOMAIN_GPU_CHIP_COUNT", N_GPU_CHIPS_DEFAULT))
+    if args.geopm_monitor and geopmsession_available():
+        args._sidecar_signals = discover_readable_signals(PREFERRED_SIDECAR_SIGNALS)
+        args._sidecar_per_tile_signals = discover_readable_signals(PER_TILE_SIGNALS, "gpu_chip", 0)
+        total_cols = len(args._sidecar_signals) + len(args._sidecar_per_tile_signals) * args._sidecar_n_gpu_chips
+        print(f"[sidecar] geopmsession will sample:")
+        print(f"           board signals     {len(args._sidecar_signals)}/{len(PREFERRED_SIDECAR_SIGNALS)} : {args._sidecar_signals}")
+        print(f"           per-tile signals  {len(args._sidecar_per_tile_signals)}/{len(PER_TILE_SIGNALS)} x {args._sidecar_n_gpu_chips} tiles : {args._sidecar_per_tile_signals}")
+        print(f"           -> {total_cols} trace columns per row")
+
+    # Convert SIGTERM/SIGINT into KeyboardInterrupt so per-cell `finally` blocks run.
+    # That ensures: (1) the sidecar gets a clean SIGTERM and flushes its YAML report,
+    # (2) any written knobs get restored, and (3) the partial summary CSV is still saved.
+    # Without this, default SIGTERM kills Python before any cleanup -> orphan sidecar,
+    # no YAML, no knob restore.
+    def _shutdown_signal(signum, _frame):
+        raise KeyboardInterrupt(f"received signal {signum}")
+    signal.signal(signal.SIGTERM, _shutdown_signal)
+    signal.signal(signal.SIGINT, _shutdown_signal)
+
+    rows = []
+    interrupted = False
+    try:
+        for knob, level, variant, repeat in iter_cells(args, sweep):
+            print(f"[cell] {args.benchmark} variant={variant} knob={knob['name']} level={level['label']} repeat={repeat}")
+            try:
+                row = run_cell(args, registry, sweep, knob, level, variant, repeat)
+            except KeyboardInterrupt:
+                interrupted = True
+                print("[interrupt] received SIGTERM/SIGINT mid-cell; current cell's sidecar was given SIGTERM and YAML should be flushed.", file=sys.stderr)
+                break
+            print(f"[done] rc={row['returncode']} runtime_s={row['runtime_s']} dir={row['run_dir']}")
+            rows.append(row)
+            if row["returncode"] != 0:
+                print(f"[warn] non-zero return code for {row['run_dir']}", file=sys.stderr)
+    finally:
+        summary_path = Path(args.summary_csv) if args.summary_csv else Path(f"experiments/phase1/{args.benchmark}/last_run_summary.csv")
+        write_summary_csv(summary_path, rows)
+        print(f"[summary] {summary_path} ({'partial; interrupted' if interrupted else 'complete'})")
+    return 130 if interrupted else (0 if all(row["returncode"] == 0 for row in rows) else 1)
 
 
 if __name__ == "__main__":

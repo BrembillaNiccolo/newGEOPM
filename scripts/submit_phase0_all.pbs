@@ -1,0 +1,189 @@
+#!/bin/bash -l
+# Run a Phase-0 strict-knob sweep for EVERY benchmark in parallel,
+# one benchmark per Aurora compute node, via ssh dispatch.
+#
+# Submit:
+#   qsub scripts/submit_phase0_all.pbs
+#   qsub -v APPLY_CONTROLS=1,VARIANT=smoke_15s scripts/submit_phase0_all.pbs
+#   qsub -l walltime=00:55:00 scripts/submit_phase0_all.pbs   # override walltime
+#
+# Layout:
+#   - select=7 nodes (one per benchmark), debug-scaling queue (1 h max wall).
+#   - For each (bench, node) pair, ssh to the node, load the GEOPM stack,
+#     and launch scripts/run_phase0_sweep.sh in the background.
+#   - Wait for every per-bench sweep to finish before exiting the PBS job.
+#   - Per-bench logs land in results/<JOBID>/<BENCH>.{stdout,stderr}; cells
+#     land in experiments/phase1/<bench>/runs/ as usual.
+
+#PBS -A UIC-HPC
+#PBS -q debug-scaling
+#PBS -l select=7
+#PBS -l place=scatter
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:flare
+#PBS -N geopm_phase0_all
+#PBS -k doe
+#PBS -j oe
+# NOTE: walltime above is the DEFAULT. Aurora debug-scaling is up to 8 nodes / 1 h.
+# Override per submission with `qsub -l walltime=00:55:00 -l select=8 ...`.
+
+set -euo pipefail
+
+if [[ -z "${PBS_O_WORKDIR:-}" ]]; then
+    echo "ERROR: PBS_O_WORKDIR is not set; submit via qsub." >&2
+    exit 2
+fi
+cd "${PBS_O_WORKDIR}"
+
+## qsub -v overrides (defaults below). Same shape as submit_phase0.pbs.
+: "${VARIANT:=smoke_15s}"
+: "${APPLY_CONTROLS:=1}"
+: "${GEOPM_MONITOR:=1}"
+: "${GEOPM_PERIOD:=0.05}"
+: "${MAX_CELLS:=}"
+: "${EXTRA_ARGS:=}"
+: "${GEOPM_LAUNCHER:=pals}"
+: "${RUN_TAG:=${PBS_JOBID%%.*}}"   # short PBS job id; isolates this submission's cells under runs/<TAG>/
+
+## Which benchmarks to run; one per node. Override via qsub -v BENCH_LIST="a,b,c".
+: "${BENCH_LIST:=cpu-dgemm,stream,dgemm-gpu,babelstream,osu,mpi-idle-wait,gpu-bursty-idle}"
+IFS=',' read -r -a BENCHES <<< "${BENCH_LIST}"
+
+## Aurora module overrides (Stack B - oneapi 2025.3.1 unlocks py-geopmdpy/3.2.2).
+: "${AURORA_ONEAPI_MODULE:=oneapi/release/2025.3.1}"
+: "${AURORA_PYTHON_MODULE:=python/3.12.12}"
+: "${AURORA_MPICH_MODULE:=mpich/opt/5.0.0.aurora_test.3c70a61}"
+: "${GEOPM_MODULE:=libgeopm/3.2.2}"
+: "${GEOPM_PY_MODULE:=py-geopmpy/3.2.2}"
+: "${GEOPM_SESSION_MODULE:=py-geopmdpy/3.2.2}"
+
+JOB_TAG="${PBS_JOBID:-manual_$(date +%Y%m%d_%H%M%S)}"
+RUN_DIR="${PBS_O_WORKDIR}/results/${JOB_TAG}"
+mkdir -p "${RUN_DIR}"
+exec > >(tee -a "${RUN_DIR}/job.stdout") 2> >(tee -a "${RUN_DIR}/job.stderr" >&2)
+
+echo "Job started at $(date)"
+echo "PBS_JOBID=${PBS_JOBID:-unset}"
+echo "PBS_O_WORKDIR=${PBS_O_WORKDIR}"
+echo "RUN_DIR=${RUN_DIR}"
+echo "Benchmarks: ${BENCHES[*]}"
+echo "VARIANT=${VARIANT} APPLY_CONTROLS=${APPLY_CONTROLS} GEOPM_MONITOR=${GEOPM_MONITOR} GEOPM_PERIOD=${GEOPM_PERIOD}"
+echo "MAX_CELLS=${MAX_CELLS:-<unset>} EXTRA_ARGS=${EXTRA_ARGS:-<empty>}"
+
+if [[ -z "${PBS_NODEFILE:-}" || ! -f "${PBS_NODEFILE}" ]]; then
+    echo "ERROR: PBS_NODEFILE not available; cannot dispatch per-node sweeps." >&2
+    exit 3
+fi
+mapfile -t NODES < <(sort -u "${PBS_NODEFILE}")
+echo "Allocated nodes (${#NODES[@]}):"
+printf '  %s\n' "${NODES[@]}"
+
+if (( ${#NODES[@]} < ${#BENCHES[@]} )); then
+    echo "WARNING: only ${#NODES[@]} nodes for ${#BENCHES[@]} benchmarks; trailing benches will be skipped." >&2
+fi
+
+## Build the per-node remote command once; same for every bench except $BENCH.
+read -r -d '' REMOTE_TEMPLATE <<'EOF' || true
+set -euo pipefail
+cd "__PBS_O_WORKDIR__"
+
+# Bring `module` into scope (login shells on Aurora compute nodes don't).
+if ! type module >/dev/null 2>&1; then
+    for init in /etc/profile.d/modules.sh /usr/share/lmod/lmod/init/bash; do
+        [[ -r "$init" ]] && source "$init" && break
+    done
+fi
+[[ -d /soft/modulefiles ]] && module use /soft/modulefiles >/dev/null 2>&1 || true
+
+module load __AURORA_ONEAPI_MODULE__
+module load __AURORA_PYTHON_MODULE__
+module load __AURORA_MPICH_MODULE__
+module load __GEOPM_MODULE__
+module load __GEOPM_PY_MODULE__   2>/dev/null || true
+module load __GEOPM_SESSION_MODULE__ 2>/dev/null || true
+hash -r
+
+export ZES_ENABLE_SYSMAN=1
+export GEOPM_LAUNCHER=__GEOPM_LAUNCHER__
+
+SWEEP=(scripts/run_phase0_sweep.sh "__BENCH__" --variant "__VARIANT__" --geopm-period "__GEOPM_PERIOD__" --run-tag "__RUN_TAG__")
+[[ "__GEOPM_MONITOR__"   == "1" ]] && SWEEP+=(--geopm-monitor)
+[[ "__APPLY_CONTROLS__"  == "1" ]] && SWEEP+=(--apply-controls)
+[[ -n "__MAX_CELLS__"       ]] && SWEEP+=(--max-cells "__MAX_CELLS__")
+# shellcheck disable=SC2206
+EXTRA=(__EXTRA_ARGS__)
+SWEEP+=("${EXTRA[@]}")
+
+echo "[$(date)] host=$(hostname) running: ${SWEEP[*]}"
+"${SWEEP[@]}"
+EOF
+
+substitute() {
+    local bench="${1}"
+    local out="${2}"
+    out="${out//__PBS_O_WORKDIR__/${PBS_O_WORKDIR}}"
+    out="${out//__AURORA_ONEAPI_MODULE__/${AURORA_ONEAPI_MODULE}}"
+    out="${out//__AURORA_PYTHON_MODULE__/${AURORA_PYTHON_MODULE}}"
+    out="${out//__AURORA_MPICH_MODULE__/${AURORA_MPICH_MODULE}}"
+    out="${out//__GEOPM_MODULE__/${GEOPM_MODULE}}"
+    out="${out//__GEOPM_PY_MODULE__/${GEOPM_PY_MODULE}}"
+    out="${out//__GEOPM_SESSION_MODULE__/${GEOPM_SESSION_MODULE}}"
+    out="${out//__GEOPM_LAUNCHER__/${GEOPM_LAUNCHER}}"
+    out="${out//__VARIANT__/${VARIANT}}"
+    out="${out//__GEOPM_PERIOD__/${GEOPM_PERIOD}}"
+    out="${out//__GEOPM_MONITOR__/${GEOPM_MONITOR}}"
+    out="${out//__APPLY_CONTROLS__/${APPLY_CONTROLS}}"
+    out="${out//__MAX_CELLS__/${MAX_CELLS}}"
+    out="${out//__EXTRA_ARGS__/${EXTRA_ARGS}}"
+    out="${out//__RUN_TAG__/${RUN_TAG}}"
+    out="${out//__BENCH__/${bench}}"
+    echo "${out}"
+}
+
+PIDS=()
+for i in "${!BENCHES[@]}"; do
+    if (( i >= ${#NODES[@]} )); then
+        echo "Skipping ${BENCHES[$i]}: no node available." >&2
+        continue
+    fi
+    BENCH="${BENCHES[$i]}"
+    NODE="${NODES[$i]}"
+    REMOTE_SCRIPT="$(substitute "${BENCH}" "${REMOTE_TEMPLATE}")"
+    LOG="${RUN_DIR}/${BENCH}.stdout"
+    ERR="${RUN_DIR}/${BENCH}.stderr"
+
+    echo "[dispatch] ${BENCH} -> ${NODE} (log: ${LOG})"
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${NODE}" "bash -l -s" \
+        <<< "${REMOTE_SCRIPT}" > "${LOG}" 2> "${ERR}" &
+    PIDS+=("$!:${BENCH}:${NODE}")
+done
+
+echo "Waiting for ${#PIDS[@]} per-bench sweeps to finish..."
+declare -A RC
+for entry in "${PIDS[@]}"; do
+    pid="${entry%%:*}"
+    rest="${entry#*:}"
+    bench="${rest%%:*}"
+    node="${rest#*:}"
+    if wait "${pid}"; then
+        RC["${bench}"]=0
+        echo "[done] ${bench} on ${node} rc=0"
+    else
+        RC["${bench}"]=$?
+        echo "[done] ${bench} on ${node} rc=${RC[${bench}]}" >&2
+    fi
+done
+
+echo
+echo "Summary:"
+ANY_FAIL=0
+for entry in "${PIDS[@]}"; do
+    rest="${entry#*:}"
+    bench="${rest%%:*}"
+    rc="${RC[${bench}]:-?}"
+    printf '  %-18s rc=%s   stdout: %s\n' "${bench}" "${rc}" "${RUN_DIR}/${bench}.stdout"
+    [[ "${rc}" != "0" ]] && ANY_FAIL=1
+done
+
+echo "Job completed at $(date)"
+exit "${ANY_FAIL}"
