@@ -1,0 +1,2 @@
+workload_type,benchmark,most_useful_knobs,rejected_or_risky_knobs,status
+cpu_compute,cpu-dgemm,none_yet,CPU_FREQUENCY_MAX_CONTROL:range_80(control_not_applied),runtime_only_waiting_for_geopm_energy

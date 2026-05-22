@@ -8,18 +8,17 @@
 
 Preferred source: the oneMKL BLAS DGEMM sample or any vendor-shipped CPU BLAS benchmark available in the Aurora oneAPI module.
 
-If no suitable benchmark binary is available, write a minimal local driver that calls `cblas_dgemm` repeatedly on large square matrices and records wall time plus GFLOP/s. Keep the source small and record the exact oneMKL version in each run's `meta.json`.
+Phase 0 local source: `src/cpu_dgemm.cpp`.
+
+The local driver uses a small blocked DGEMM implementation and prints key-value metrics (`runtime_s`, `avg_gflops`, `best_gflops`, `checksum`) so the Phase 0 runner can parse it without benchmark-specific code. This is enough to validate the modular sweep path. Later, if a oneMKL sample is preferred for production measurements, update `benchmarks/registry.json` without changing the sweep runner.
 
 ## Build
 
 Use the Aurora oneAPI module and link against MKL:
 
 ```bash
-module load oneapi/release
-
-icx -O3 -qopenmp cpu_dgemm.cpp \
-    -qmkl \
-    -o cpu_dgemm
+cd newGEOPM
+./scripts/build_benchmark.sh cpu-dgemm
 ```
 
 If using a shipped oneMKL sample, record the sample path and module version instead of vendoring a copy.
@@ -31,13 +30,13 @@ export OMP_NUM_THREADS=<physical cores per socket or node>
 export OMP_PROC_BIND=close
 export OMP_PLACES=cores
 
-./cpu_dgemm --m 32768 --n 32768 --k 32768 --iters 10
+./benchmarks/cpu-dgemm/bin/cpu_dgemm --m 32768 --n 32768 --k 32768 --iters 10
 ```
 
 Tune matrix size so the run lasts at least 30 seconds and does not fit in cache. Use HBM binding when testing HBM-mode behavior:
 
 ```bash
-numactl --membind=<hbm_node> -- ./cpu_dgemm --m 32768 --n 32768 --k 32768 --iters 10
+numactl --membind=<hbm_node> -- ./benchmarks/cpu-dgemm/bin/cpu_dgemm --m 32768 --n 32768 --k 32768 --iters 10
 ```
 
 ## Expected runtime
@@ -56,4 +55,4 @@ Report GFLOP/s and verify that output is numerically sane, either by checking a 
 
 ## Sweep config
 
-See `experiments/phase1/cpu-dgemm/sweep.yaml` once Phase 1 configs are written.
+See `experiments/phase1/cpu-dgemm/sweep.json`.

@@ -1,13 +1,10 @@
-benchmarks/**
-# top-level CLAUDE.md only
-!benchmarks/CLAUDE.md
-# descend into each benchmark folder
-!benchmarks/*/
-# only README.md, VERSION.txt, and Phase 1 deferral markers in each benchmark
-!benchmarks/*/README.md
-!benchmarks/*/VERSION.txt
-!benchmarks/*/DELETE.md
-# phase grouping docs
-!benchmarks/by-phase/
-!benchmarks/by-phase/**/
-!benchmarks/by-phase/**/README.md
+__pycache__/
+*.pyc
+core.*
+
+benchmarks/*/bin/
+benchmarks/*/src/build/
+benchmarks/stream/src/stream
+
+experiments/phase1/*/runs/
+experiments/phase1/*/last_run_summary.csv

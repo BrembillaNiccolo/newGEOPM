@@ -1,0 +1,31 @@
+{
+  "benchmark": "babelstream",
+  "description": "GPU-memory anchor. GPU tile frequency is the main useful knob; performance factor is a guarded experiment.",
+  "variants": ["single_tile", "single_card"],
+  "repeats": 3,
+  "runtime_slack": 0.05,
+  "knobs": [
+    {
+      "name": "GPU_CORE_FREQUENCY_MAX_CONTROL",
+      "domain": "gpu_chip",
+      "instances": "auto",
+      "reason": "Expected to save energy with small bandwidth loss on GPU-memory-bound Triad.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "range_80", "kind": "fraction_range", "fraction": 0.80, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"},
+        {"label": "range_65", "kind": "fraction_range", "fraction": 0.65, "min_signal": "GPU_CORE_FREQUENCY_MIN_AVAIL", "max_signal": "GPU_CORE_FREQUENCY_MAX_AVAIL"}
+      ]
+    },
+    {
+      "name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL",
+      "domain": "gpu_chip",
+      "instances": "auto",
+      "reason": "May bias PVC toward memory behavior; runner must read back because writes may be refused.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "mem_bias", "kind": "literal", "value": 0.0},
+        {"label": "balanced", "kind": "literal", "value": 0.5}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,198 @@
+{
+  "benchmarks": {
+    "cpu-dgemm": {
+      "workload_type": "cpu_compute",
+      "phase": "phase1",
+      "source_dir": "benchmarks/cpu-dgemm/src",
+      "binary": "benchmarks/cpu-dgemm/bin/cpu_dgemm",
+      "build": {
+        "command": "{cxx} {cxxflags} -fopenmp benchmarks/cpu-dgemm/src/cpu_dgemm.cpp -o benchmarks/cpu-dgemm/bin/cpu_dgemm"
+      },
+      "default_env": {
+        "OMP_PROC_BIND": "close",
+        "OMP_PLACES": "cores"
+      },
+      "variants": {
+        "smoke": {
+          "args": "--m 256 --n 256 --k 256 --iters 2 --block 32"
+        },
+        "phase0": {
+          "args": "--m 1024 --n 1024 --k 1024 --iters 3 --block 64"
+        },
+        "aurora": {
+          "args": "--m 8192 --n 8192 --k 8192 --iters 5 --block 96"
+        }
+      },
+      "metric_keys": ["runtime_s", "avg_iter_s", "avg_gflops", "best_gflops", "checksum"]
+    },
+    "stream": {
+      "workload_type": "cpu_memory",
+      "phase": "phase1",
+      "binary": "benchmarks/stream/src/stream",
+      "build": {
+        "command": "{cc} {cflags} -fopenmp -DSTREAM_ARRAY_SIZE={stream_array_size} -DNTIMES={stream_ntimes} -o benchmarks/stream/src/stream benchmarks/stream/src/stream.c"
+      },
+      "default_env": {
+        "OMP_PROC_BIND": "close",
+        "OMP_PLACES": "cores"
+      },
+      "variants": {
+        "smoke": {
+          "args": ""
+        },
+        "phase0": {
+          "args": ""
+        },
+        "hbm": {
+          "prefix": "numactl --membind=${HBM_NUMA_NODE}",
+          "args": ""
+        },
+        "flat": {
+          "prefix": "numactl --membind=${DDR_NUMA_NODE}",
+          "args": ""
+        }
+      },
+      "metric_keys": ["runtime_s", "triad_bandwidth_mb_s"]
+    },
+    "dgemm-gpu": {
+      "workload_type": "gpu_compute",
+      "phase": "phase1",
+      "binary": "benchmarks/dgemm-gpu/bin/gpu_dgemm_sycl",
+      "build": {
+        "command": "{sycl_cxx} {sycl_cxxflags} benchmarks/dgemm-gpu/src/gpu_dgemm_sycl.cpp -o benchmarks/dgemm-gpu/bin/gpu_dgemm_sycl"
+      },
+      "default_env": {
+        "ZES_ENABLE_SYSMAN": "1"
+      },
+      "variants": {
+        "smoke": {
+          "env": {"ONEAPI_DEVICE_SELECTOR": "opencl:cpu"},
+          "args": "--M 256 --N 256 --K 256 --iters 2"
+        },
+        "phase0": {
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "--M 1024 --N 1024 --K 1024 --iters 5"
+        },
+        "single_tile": {
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "--M 2048 --N 2048 --K 2048 --dtype double --iters 10"
+        },
+        "single_card": {
+          "env": {"ZE_AFFINITY_MASK": "0"},
+          "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 10"
+        }
+      },
+      "metric_keys": ["runtime_s", "gflops"]
+    },
+    "babelstream": {
+      "workload_type": "gpu_memory",
+      "phase": "phase1",
+      "binary": "benchmarks/babelstream/bin/mini_babelstream_sycl",
+      "build": {
+        "command": "{sycl_cxx} {sycl_cxxflags} benchmarks/babelstream/src/mini_babelstream_sycl.cpp -o benchmarks/babelstream/bin/mini_babelstream_sycl"
+      },
+      "default_env": {
+        "ZES_ENABLE_SYSMAN": "1"
+      },
+      "variants": {
+        "smoke": {
+          "env": {"ONEAPI_DEVICE_SELECTOR": "opencl:cpu"},
+          "args": "-s 1048576 --iters 3"
+        },
+        "phase0": {
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "-s 16777216 --iters 20"
+        },
+        "single_tile": {
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "-s 268435456 --iters 20"
+        },
+        "single_card": {
+          "env": {"ZE_AFFINITY_MASK": "0"},
+          "args": "-s 536870912 --iters 20"
+        }
+      },
+      "metric_keys": ["runtime_s", "triad_bandwidth_mb_s"]
+    },
+    "osu": {
+      "workload_type": "mpi_communication",
+      "phase": "phase1",
+      "binary": "benchmarks/osu/bin/mini_osu_collective",
+      "build": {
+        "command": "{mpicxx} {mpicxxflags} benchmarks/osu/src/mini_osu_collective.cpp -o benchmarks/osu/bin/mini_osu_collective"
+      },
+      "default_env": {
+        "ZES_ENABLE_SYSMAN": "1"
+      },
+      "variants": {
+        "smoke": {
+          "args": "--collective allreduce -m 1:1024 --iters 10 --warmup 2"
+        },
+        "allreduce_4node": {
+          "launcher": "mpiexec -n 32",
+          "args": "--collective allreduce -m 1:8388608 --iters 100 --warmup 10"
+        },
+        "allreduce_8node": {
+          "launcher": "mpiexec -n 64",
+          "args": "--collective allreduce -m 1:8388608 --iters 100 --warmup 10"
+        },
+        "alltoall_4node": {
+          "launcher": "mpiexec -n 32",
+          "args": "--collective alltoall -m 1:8388608 --iters 100 --warmup 10"
+        }
+      },
+      "metric_keys": ["runtime_s", "latency_us"]
+    },
+    "mpi-idle-wait": {
+      "workload_type": "mpi_slack",
+      "phase": "phase1",
+      "binary": "benchmarks/mpi-idle-wait/bin/mpi_idle_wait",
+      "build": {
+        "command": "{mpicxx} {mpicxxflags} benchmarks/mpi-idle-wait/src/mpi_idle_wait.cpp -o benchmarks/mpi-idle-wait/bin/mpi_idle_wait"
+      },
+      "default_env": {
+        "ZES_ENABLE_SYSMAN": "1"
+      },
+      "variants": {
+        "smoke": {
+          "args": "--compute-ms 1 --wait-ms 1 --iterations 3 --mode barrier"
+        },
+        "barrier": {
+          "launcher": "mpiexec -n ${MPI_RANKS:-32}",
+          "args": "--compute-ms 20 --wait-ms 20 --iterations 500 --mode barrier"
+        },
+        "allreduce_skew": {
+          "launcher": "mpiexec -n ${MPI_RANKS:-32}",
+          "args": "--compute-ms 20 --wait-ms 80 --skew-rank 0 --iterations 500 --mode allreduce"
+        }
+      },
+      "metric_keys": ["runtime_s", "compute_s", "wait_s"]
+    },
+    "gpu-bursty-idle": {
+      "workload_type": "gpu_bursty_idle",
+      "phase": "phase1",
+      "binary": "benchmarks/gpu-bursty-idle/bin/gpu_bursty_idle",
+      "build": {
+        "command": "{sycl_cxx} {sycl_cxxflags} benchmarks/gpu-bursty-idle/src/gpu_bursty_idle.cpp -o benchmarks/gpu-bursty-idle/bin/gpu_bursty_idle"
+      },
+      "default_env": {
+        "ZES_ENABLE_SYSMAN": "1"
+      },
+      "variants": {
+        "smoke": {
+          "env": {"ONEAPI_DEVICE_SELECTOR": "opencl:cpu"},
+          "args": "--kernel-ms 2 --gap-ms 2 --iterations 3 --gap-mode sleep --elements 1048576"
+        },
+        "sleep_gap": {
+          "env": {"ZE_AFFINITY_MASK": "0.0"},
+          "args": "--kernel-ms 20 --gap-ms 80 --iterations 500 --gap-mode sleep"
+        },
+        "cpu_gap": {
+          "env": {"ZE_AFFINITY_MASK": "0"},
+          "args": "--kernel-ms 20 --gap-ms 80 --iterations 500 --gap-mode cpu"
+        }
+      },
+      "metric_keys": ["runtime_s", "kernel_s", "gap_s"]
+    }
+  }
+}

@@ -15,4 +15,12 @@ GEOPM-based energy-efficiency research for the Aurora supercomputer (ALCF). Targ
 
 ## Status
 
-Phase 0 (repo scaffolding + design docs). Aurora is in maintenance; characterization sweeps begin when it returns.
+Phase 0 now has a first runnable path in addition to the design docs:
+
+- `benchmarks/cpu-dgemm/src/cpu_dgemm.cpp` implements the first simple benchmark.
+- `benchmarks/registry.json` describes benchmark build/run commands.
+- `experiments/phase1/*/sweep.json` lists the first useful GEOPM knobs per workload class.
+- `scripts/run_phase0_sweep.sh` runs a benchmark cell and can optionally apply GEOPM controls.
+- `analysis/scripts/summarize_phase0_knobs.sh` writes the useful-knob CSVs.
+
+See [`docs/phase0-knob-discovery.md`](docs/phase0-knob-discovery.md) for commands.

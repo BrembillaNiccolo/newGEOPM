@@ -1,0 +1,2 @@
+benchmark,workload_type,variant,knob,level,apply_controls,runtime_slack,n,median_runtime_s,median_energy_j,baseline_runtime_s,baseline_energy_j,runtime_change_pct,energy_change_pct,energy_savings_pct,effectiveness
+cpu-dgemm,cpu_compute,smoke,CPU_FREQUENCY_MAX_CONTROL,range_80,False,0.05,1,0.066594136,,0.040723602,,63.52712611227269,,,control_not_applied

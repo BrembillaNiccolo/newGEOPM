@@ -1,0 +1,20 @@
+{
+  "benchmark": "osu",
+  "description": "MPI collective communication. First useful knob is CPU frequency; SST stays out of Phase 0.",
+  "variants": ["allreduce_4node"],
+  "repeats": 3,
+  "runtime_slack": 0.02,
+  "knobs": [
+    {
+      "name": "CPU_FREQUENCY_MAX_CONTROL",
+      "domain": "core",
+      "instances": "auto",
+      "reason": "MPI wait/spin phases should tolerate lower core frequency with little latency impact.",
+      "levels": [
+        {"label": "default", "kind": "default"},
+        {"label": "range_70", "kind": "fraction_range", "fraction": 0.70, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"},
+        {"label": "range_50", "kind": "fraction_range", "fraction": 0.50, "min_signal": "CPU_FREQUENCY_MIN_AVAIL", "max_signal": "CPU_FREQUENCY_MAX_AVAIL"}
+      ]
+    }
+  ]
+}
