@@ -16,8 +16,8 @@ Environment:
   MPICXXFLAGS MPI C++ flags (default: -O3 -std=c++17)
   SYCL_CXX  SYCL compiler (default: icpx)
   SYCL_CXXFLAGS SYCL C++ flags (default: -O3 -std=c++17 -fsycl)
-  STREAM_ARRAY_SIZE Elements for STREAM build (default: 10000000)
-  STREAM_NTIMES STREAM iterations (default: 10)
+  STREAM_ARRAY_SIZE Elements for STREAM build (default: 268435456 = 256M, ~2 GiB per array)
+  STREAM_NTIMES STREAM iterations (default: 2500, targets ~15 s on Aurora HBM)
 EOF
 }
 
@@ -62,8 +62,10 @@ def build_one(bench, entry):
         "mpicxxflags": os.environ.get("MPICXXFLAGS", "-O3 -std=c++17"),
         "sycl_cxx": os.environ.get("SYCL_CXX") or pick("icpx", "dpcpp"),
         "sycl_cxxflags": os.environ.get("SYCL_CXXFLAGS", "-O3 -std=c++17 -fsycl"),
-        "stream_array_size": os.environ.get("STREAM_ARRAY_SIZE", "10000000"),
-        "stream_ntimes": os.environ.get("STREAM_NTIMES", "10"),
+        # 256 M doubles = ~2 GiB per array -> 6 GiB triad pass; >> any cache; lands in HBM.
+        # 2500 iters * ~6 ms/pass at ~1 TB/s = ~15 s on Aurora HBM. Override for shorter/longer.
+        "stream_array_size": os.environ.get("STREAM_ARRAY_SIZE", "268435456"),
+        "stream_ntimes": os.environ.get("STREAM_NTIMES", "2500"),
     }
     command = entry["build"]["command"].format(**fmt)
 
