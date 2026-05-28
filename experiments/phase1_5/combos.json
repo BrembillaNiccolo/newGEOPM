@@ -1,0 +1,336 @@
+{
+  "_description": "Phase 1.5 knob-combination sweep. Each combo = a tuple of (knob, value) writes applied as a single cell. Five blocks: (A) 8 default agent arms from agent/src/action_grid_default.json [validation], (B) 3x3 CPU_FREQ x GPU_FREQ grid [main interaction test], (C) 3x3 CPU_FREQ x CPU_UNCORE grid [Phase 0 said uncore is HARMFUL on stream/osu but USEFUL on cpu-dgemm — tests whether keeping uncore high while dropping CPU is safe], (D) 2x2 GPU_FREQ x PERF_FACTOR [redundancy check: are these two GPU levers complementary or duplicates?], (E) 2x2 CPU_FREQ x CPU_POWER_LIMIT [redundancy check on the CPU side]. Total 34 combos per benchmark. See docs/phase1_5-combo-design.md.",
+  "_total_combos_per_bench": 34,
+  "_reps_per_cell": "4 in-process by default (--repeats=4); 20 nodes per bench = 80 reps per (bench, combo) per PBS job.",
+  "_min_floors": "Applied automatically by the runner before any combo whose writes touch a *_MAX_CONTROL signal. Floors are hard-coded: CPU 0.8 GHz, UNCORE 0.8 GHz, GPU 0.2 GHz. Verified in results/8509922.",
+
+  "min_control_floors": [
+    {"name": "CPU_FREQUENCY_MIN_CONTROL",         "domain": "core",     "value": 800000000},
+    {"name": "CPU_UNCORE_FREQUENCY_MIN_CONTROL",  "domain": "package",  "value": 800000000},
+    {"name": "GPU_CORE_FREQUENCY_MIN_CONTROL",    "domain": "gpu_chip", "value": 200000000}
+  ],
+
+  "combos": [
+    {
+      "label": "A0_all_max",
+      "class_hint": "unknown",
+      "_block": "A_agent_arms",
+      "writes": []
+    },
+    {
+      "label": "A1_memory_bound_save",
+      "class_hint": "memory_bound",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 1000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 2300000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0}
+      ]
+    },
+    {
+      "label": "A2_gpu_compute_max",
+      "class_hint": "gpu_compute",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 2000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 1600000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 1600000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 1.0}
+      ]
+    },
+    {
+      "label": "A3_cpu_compute_uncore_save",
+      "class_hint": "cpu_compute",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 3500000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 1200000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.25}
+      ]
+    },
+    {
+      "label": "A4_comm_wait_save",
+      "class_hint": "comm_wait",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 1000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 800000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0},
+        {"name": "CPU_POWER_LIMIT_CONTROL",          "domain": "package",  "value": 175.0}
+      ]
+    },
+    {
+      "label": "A5_comm_collective_safe",
+      "class_hint": "comm_collective",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 3500000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 2300000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0}
+      ]
+    },
+    {
+      "label": "A6_bursty_gpu_idle",
+      "class_hint": "bursty",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 1600000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 1600000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0}
+      ]
+    },
+    {
+      "label": "A7_aggressive_save",
+      "class_hint": "aggressive",
+      "_block": "A_agent_arms",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",     "value": 1000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package",  "value": 800000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL",   "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0},
+        {"name": "CPU_POWER_LIMIT_CONTROL",          "domain": "package",  "value": 105.0}
+      ]
+    },
+
+    {
+      "label": "B_cpu1.0_gpu0.4",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 1000000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 400000000}
+      ]
+    },
+    {
+      "label": "B_cpu1.0_gpu1.0",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 1000000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1000000000}
+      ]
+    },
+    {
+      "label": "B_cpu1.0_gpu1.6",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 1000000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1600000000}
+      ]
+    },
+    {
+      "label": "B_cpu2.0_gpu0.4",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 2000000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 400000000}
+      ]
+    },
+    {
+      "label": "B_cpu2.0_gpu1.0",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 2000000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1000000000}
+      ]
+    },
+    {
+      "label": "B_cpu2.0_gpu1.6",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 2000000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1600000000}
+      ]
+    },
+    {
+      "label": "B_cpu3.5_gpu0.4",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 3500000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 400000000}
+      ]
+    },
+    {
+      "label": "B_cpu3.5_gpu1.0",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 3500000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1000000000}
+      ]
+    },
+    {
+      "label": "B_cpu3.5_gpu1.6",
+      "class_hint": "grid_cpu_gpu",
+      "_block": "B_cpu_x_gpu_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",      "domain": "core",     "value": 3500000000},
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1600000000}
+      ]
+    },
+
+    {
+      "label": "C_cpu1.0_unc0.8",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 1000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 800000000}
+      ]
+    },
+    {
+      "label": "C_cpu1.0_unc1.6",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 1000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 1600000000}
+      ]
+    },
+    {
+      "label": "C_cpu1.0_unc2.3",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 1000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 2300000000}
+      ]
+    },
+    {
+      "label": "C_cpu2.0_unc0.8",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 2000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 800000000}
+      ]
+    },
+    {
+      "label": "C_cpu2.0_unc1.6",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 2000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 1600000000}
+      ]
+    },
+    {
+      "label": "C_cpu2.0_unc2.3",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 2000000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 2300000000}
+      ]
+    },
+    {
+      "label": "C_cpu3.5_unc0.8",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 3500000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 800000000}
+      ]
+    },
+    {
+      "label": "C_cpu3.5_unc1.6",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 3500000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 1600000000}
+      ]
+    },
+    {
+      "label": "C_cpu3.5_unc2.3",
+      "class_hint": "grid_cpu_unc",
+      "_block": "C_cpu_x_uncore_grid",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL",        "domain": "core",    "value": 3500000000},
+        {"name": "CPU_UNCORE_FREQUENCY_MAX_CONTROL", "domain": "package", "value": 2300000000}
+      ]
+    },
+
+    {
+      "label": "D_gpu0.4_pf0",
+      "class_hint": "redundancy_gpu_pf",
+      "_block": "D_gpu_x_pf_corners",
+      "writes": [
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0}
+      ]
+    },
+    {
+      "label": "D_gpu0.4_pf1",
+      "class_hint": "redundancy_gpu_pf",
+      "_block": "D_gpu_x_pf_corners",
+      "writes": [
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 400000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 1.0}
+      ]
+    },
+    {
+      "label": "D_gpu1.6_pf0",
+      "class_hint": "redundancy_gpu_pf",
+      "_block": "D_gpu_x_pf_corners",
+      "writes": [
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1600000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 0.0}
+      ]
+    },
+    {
+      "label": "D_gpu1.6_pf1",
+      "class_hint": "redundancy_gpu_pf",
+      "_block": "D_gpu_x_pf_corners",
+      "writes": [
+        {"name": "GPU_CORE_FREQUENCY_MAX_CONTROL", "domain": "gpu_chip", "value": 1600000000},
+        {"name": "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL", "domain": "gpu_chip", "value": 1.0}
+      ]
+    },
+
+    {
+      "label": "E_cpu1.0_pl_default",
+      "class_hint": "redundancy_cpu_pl",
+      "_block": "E_cpu_x_cpu_pl_corners",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL", "domain": "core", "value": 1000000000}
+      ]
+    },
+    {
+      "label": "E_cpu1.0_pl175",
+      "class_hint": "redundancy_cpu_pl",
+      "_block": "E_cpu_x_cpu_pl_corners",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL", "domain": "core", "value": 1000000000},
+        {"name": "CPU_POWER_LIMIT_CONTROL",   "domain": "package", "value": 175.0}
+      ]
+    },
+    {
+      "label": "E_cpu3.5_pl_default",
+      "class_hint": "redundancy_cpu_pl",
+      "_block": "E_cpu_x_cpu_pl_corners",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL", "domain": "core", "value": 3500000000}
+      ]
+    },
+    {
+      "label": "E_cpu3.5_pl175",
+      "class_hint": "redundancy_cpu_pl",
+      "_block": "E_cpu_x_cpu_pl_corners",
+      "writes": [
+        {"name": "CPU_FREQUENCY_MAX_CONTROL", "domain": "core", "value": 3500000000},
+        {"name": "CPU_POWER_LIMIT_CONTROL",   "domain": "package", "value": 175.0}
+      ]
+    }
+  ]
+}

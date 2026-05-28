@@ -1,0 +1,7 @@
+benchmark,pl_default_n,pl175_n,pl_default_energy_j,pl175_energy_j,diff_pct_energy,pl_default_runtime_s,pl175_runtime_s,diff_pct_runtime,verdict
+babelstream,322,299,19755.2,19614.3,-0.7,11.62,11.62,+0.0,redundant
+cpu-dgemm,327,271,20519.3,89913.9,+338.2,16.20,52.22,+222.4,PL matters
+dgemm-gpu,301,298,28458.2,28245.9,-0.7,14.40,14.39,-0.0,redundant
+gpu-bursty-idle,308,296,23501.2,23295.6,-0.9,15.05,15.05,-0.0,redundant
+mpi-idle-wait,349,300,4547.4,4470.4,-1.7,7.52,7.52,+0.0,redundant
+osu,302,282,53108.4,53008.1,-0.2,29.45,29.46,+0.1,redundant

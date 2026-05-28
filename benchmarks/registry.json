@@ -33,6 +33,10 @@
         "all_tiles_15s": {
           "_note": "CPU bench -- 'all tiles' is meaningless here; alias of smoke_15s so one VARIANT env works across all benches in submit_phase0_all.pbs.",
           "args": "--m 4096 --n 4096 --k 4096 --iters 10 --block 64"
+        },
+        "all_tiles_45s": {
+          "_note": "3x work vs all_tiles_15s. ~30s wall at default, up to ~90s under cap-bound levels. Designed for prod-queue long sweeps where richer per-cell telemetry matters.",
+          "args": "--m 4096 --n 4096 --k 4096 --iters 30 --block 64"
         }
       },
       "metric_keys": ["runtime_s", "avg_iter_s", "avg_gflops", "best_gflops", "checksum"]
@@ -73,6 +77,10 @@
         },
         "all_tiles_15s": {
           "_note": "CPU bench -- alias of smoke_15s so one VARIANT env works across all benches.",
+          "args": ""
+        },
+        "all_tiles_45s": {
+          "_note": "Stream runtime is build-time. For 3x duration on DDR (~67s), rebuild with: STREAM_NTIMES=2100 ./scripts/build_benchmark.sh stream  (default NTIMES=700 gives ~22s on DDR.) Args stay empty; the binary chosen at build time decides the work amount.",
           "args": ""
         }
       },
@@ -121,6 +129,12 @@
           "launcher": "mpiexec -n 12 -ppn 12",
           "prefix": "scripts/per_tile_env.sh",
           "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 50"
+        },
+        "all_tiles_45s": {
+          "_note": "3x all_tiles_15s. 12 MPI ranks * 150 iters of 4096^3 each. Wall ~45 s at default, up to ~135 s under aggressive caps.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "--M 4096 --N 4096 --K 4096 --dtype double --iters 150"
         }
       },
       "metric_keys": ["runtime_s", "gflops"]
@@ -168,6 +182,12 @@
           "launcher": "mpiexec -n 12 -ppn 12",
           "prefix": "scripts/per_tile_env.sh",
           "args": "-s 268435456 --iters 1800"
+        },
+        "all_tiles_45s": {
+          "_note": "3x all_tiles_15s. 12 ranks * 5400 iters of 2 GiB Triad each. Wall ~45 s at default.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "-s 268435456 --iters 5400"
         }
       },
       "metric_keys": ["runtime_s", "triad_bandwidth_mb_s"]
@@ -204,14 +224,19 @@
           "args": "--collective allreduce -m 1:33554432 --iters 4000 --warmup 50"
         },
         "smoke_15s": {
-          "_note": "~15 s target intra-node allreduce: 200 iters. (Was 1000 -> 80 s; cut 5x after first run.)",
+          "_note": "~9 s target intra-node allreduce: 120 iters (60% of previous 200). Tuned so osu finishes alongside slower benches under the BOARD cap sweep.",
           "launcher": "mpiexec -n ${MPI_RANKS:-12}",
-          "args": "--collective allreduce -m 1:33554432 --iters 200 --warmup 10"
+          "args": "--collective allreduce -m 1:33554432 --iters 120 --warmup 10"
         },
         "all_tiles_15s": {
           "_note": "MPI bench -- alias of smoke_15s so one VARIANT env works across all benches.",
           "launcher": "mpiexec -n ${MPI_RANKS:-12}",
-          "args": "--collective allreduce -m 1:33554432 --iters 200 --warmup 10"
+          "args": "--collective allreduce -m 1:33554432 --iters 120 --warmup 10"
+        },
+        "all_tiles_45s": {
+          "_note": "3x all_tiles_15s. 360 iters. Wall ~30 s at default; up to ~250 s on aggressive board caps.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--collective allreduce -m 1:33554432 --iters 360 --warmup 30"
         }
       },
       "metric_keys": ["runtime_s", "latency_us"]
@@ -252,6 +277,11 @@
           "_note": "MPI bench -- alias of smoke_15s so one VARIANT env works across all benches.",
           "launcher": "mpiexec -n ${MPI_RANKS:-12}",
           "args": "--compute-ms 30 --wait-ms 30 --iterations 250 --mode barrier"
+        },
+        "all_tiles_45s": {
+          "_note": "Deterministic ~45 s: 750 iter * (30 ms compute + 30 ms wait) = 45 s.",
+          "launcher": "mpiexec -n ${MPI_RANKS:-12}",
+          "args": "--compute-ms 30 --wait-ms 30 --iterations 750 --mode barrier"
         }
       },
       "metric_keys": ["runtime_s", "compute_s", "wait_s"]
@@ -295,6 +325,12 @@
           "launcher": "mpiexec -n 12 -ppn 12",
           "prefix": "scripts/per_tile_env.sh",
           "args": "--kernel-ms 30 --gap-ms 30 --iterations 250 --gap-mode sleep --elements 4194304"
+        },
+        "all_tiles_45s": {
+          "_note": "Deterministic ~45 s: 12 tiles in lockstep, 750 iter * (30 ms kernel + 30 ms sleep gap) = 45 s.",
+          "launcher": "mpiexec -n 12 -ppn 12",
+          "prefix": "scripts/per_tile_env.sh",
+          "args": "--kernel-ms 30 --gap-ms 30 --iterations 750 --gap-mode sleep --elements 4194304"
         }
       },
       "metric_keys": ["runtime_s", "kernel_s", "gap_s"]

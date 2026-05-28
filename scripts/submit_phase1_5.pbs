@@ -1,0 +1,264 @@
+#!/bin/bash -l
+# Phase 1.5 knob-combination sweep on debug-scaling: 140 nodes = 7 benches x
+# 20 nodes/bench. Each node runs the 34 combos in experiments/phase1_5/
+# combos.json with --repeats=4 by default, producing 80 reps per (bench,
+# combo) across the 20 nodes. Per-node walltime ~45 min, fits 1 h slot.
+#
+# Same per-node dispatch + per-node summary merge architecture as
+# scripts/submit_phase0_scaling.pbs. Different inner runner
+# (run_phase1_5_combos.sh) and output dir (experiments/phase1_5/).
+#
+# See docs/phase1_5-combo-design.md for the experimental design.
+
+#PBS -A UIC-HPC
+#PBS -q debug-scaling
+#PBS -l select=140
+#PBS -l place=scatter
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:flare
+#PBS -N geopm_phase1_5
+#PBS -k doe
+#PBS -j oe
+
+set -euo pipefail
+
+if [[ -z "${PBS_O_WORKDIR:-}" ]]; then
+    echo "ERROR: PBS_O_WORKDIR is not set; submit via qsub." >&2
+    exit 2
+fi
+cd "${PBS_O_WORKDIR}"
+
+## qsub -v overrides
+: "${VARIANT:=all_tiles_15s}"
+: "${APPLY_CONTROLS:=1}"
+: "${GEOPM_MONITOR:=1}"
+: "${GEOPM_PERIOD:=0.05}"
+: "${REPEATS:=4}"
+: "${MAX_CELLS:=}"
+: "${BENCH_LIST:=cpu-dgemm,stream,dgemm-gpu,babelstream,osu,mpi-idle-wait,gpu-bursty-idle}"
+: "${NODES_PER_BENCH:=20}"
+: "${COMBOS_FILE:=experiments/phase1_5/combos.json}"
+: "${COMBO_BLOCKS:=}"   # Phase 1.5b: e.g. "B,C,D,E" to skip Block A
+: "${GEOPM_LAUNCHER:=pals}"
+
+## Stack B module defaults
+: "${AURORA_ONEAPI_MODULE:=oneapi/release/2025.3.1}"
+: "${AURORA_PYTHON_MODULE:=python/3.12.12}"
+: "${AURORA_MPICH_MODULE:=mpich/opt/5.0.0.aurora_test.3c70a61}"
+: "${GEOPM_MODULE:=libgeopm/3.2.2}"
+: "${GEOPM_PY_MODULE:=py-geopmpy/3.2.2}"
+: "${GEOPM_SESSION_MODULE:=py-geopmdpy/3.2.2}"
+
+IFS=',' read -r -a BENCHES <<< "${BENCH_LIST}"
+NBENCH=${#BENCHES[@]}
+EXPECTED_NODES=$(( NBENCH * NODES_PER_BENCH ))
+
+JOB_TAG="${PBS_JOBID:-manual_$(date +%Y%m%d_%H%M%S)}"
+JOB_TAG_SHORT="${JOB_TAG%%.*}"
+RUN_DIR="${PBS_O_WORKDIR}/results/phase1_5_${JOB_TAG_SHORT}"
+PER_NODE_DIR="${RUN_DIR}/per_node_summaries"
+PER_NODE_LOGS="${RUN_DIR}/per_node_logs"
+mkdir -p "${PER_NODE_DIR}" "${PER_NODE_LOGS}"
+
+exec > >(tee -a "${RUN_DIR}/job.stdout") 2> >(tee -a "${RUN_DIR}/job.stderr" >&2)
+
+echo "Phase 1.5 combo sweep — job started at $(date)"
+echo "PBS_JOBID=${PBS_JOBID:-unset}  JOB_TAG_SHORT=${JOB_TAG_SHORT}"
+echo "BENCHES (${NBENCH}): ${BENCHES[*]}"
+echo "NODES_PER_BENCH=${NODES_PER_BENCH}  expected_nodes=${EXPECTED_NODES}"
+echo "COMBOS_FILE=${COMBOS_FILE}  REPEATS=${REPEATS}"
+echo "VARIANT=${VARIANT} APPLY_CONTROLS=${APPLY_CONTROLS} GEOPM_MONITOR=${GEOPM_MONITOR}"
+
+if [[ ! -f "${COMBOS_FILE}" ]]; then
+    echo "ERROR: combos file ${COMBOS_FILE} not found." >&2
+    exit 4
+fi
+NCOMBOS=$(python3 -c "import json; print(len(json.load(open('${COMBOS_FILE}'))['combos']))")
+echo "combos in ${COMBOS_FILE}: ${NCOMBOS}  -> ${NCOMBOS} x ${REPEATS} = $(( NCOMBOS * REPEATS )) cells per node"
+
+if [[ -z "${PBS_NODEFILE:-}" || ! -f "${PBS_NODEFILE}" ]]; then
+    echo "ERROR: PBS_NODEFILE not available." >&2
+    exit 3
+fi
+mapfile -t NODES < <(sort -u "${PBS_NODEFILE}")
+echo "Allocated unique nodes: ${#NODES[@]}"
+
+## Show first 20 rank assignments
+echo
+echo "Rank assignment plan (first 20 of ${EXPECTED_NODES}; rank -> bench / node):"
+SHOW_LIMIT=20
+for ((R=0; R<EXPECTED_NODES; R++)); do
+    if (( R >= ${#NODES[@]} )); then break; fi
+    if (( R >= SHOW_LIMIT )); then break; fi
+    B_IDX=$(( R / NODES_PER_BENCH ))
+    BENCH="${BENCHES[${B_IDX}]}"
+    NODE="${NODES[${R}]}"
+    printf '  rank %3d  %-18s  %s\n' "${R}" "${BENCH}" "${NODE}"
+done
+if (( EXPECTED_NODES > SHOW_LIMIT )); then
+    echo "  ... ${EXPECTED_NODES} ranks total"
+fi
+
+## Per-rank remote script template
+read -r -d '' REMOTE_TEMPLATE <<'EOF' || true
+set -euo pipefail
+cd "__PBS_O_WORKDIR__"
+
+if ! type module >/dev/null 2>&1; then
+    for init in /etc/profile.d/modules.sh /usr/share/lmod/lmod/init/bash; do
+        [[ -r "$init" ]] && source "$init" && break
+    done
+fi
+[[ -d /soft/modulefiles ]] && module use /soft/modulefiles >/dev/null 2>&1 || true
+
+module load __AURORA_ONEAPI_MODULE__
+module load __AURORA_PYTHON_MODULE__
+module load __AURORA_MPICH_MODULE__
+module load __GEOPM_MODULE__
+module load __GEOPM_PY_MODULE__   2>/dev/null || true
+module load __GEOPM_SESSION_MODULE__ 2>/dev/null || true
+hash -r
+
+export ZES_ENABLE_SYSMAN=1
+export GEOPM_LAUNCHER=__GEOPM_LAUNCHER__
+
+BENCH="__BENCH__"
+RUN_TAG="__RUN_TAG__"
+SUMMARY_CSV="__SUMMARY_CSV__"
+
+SWEEP=(scripts/run_phase1_5_combos.sh "${BENCH}" \
+       --combos "__COMBOS_FILE__" \
+       --variant "__VARIANT__" \
+       --repeats "__REPEATS__" \
+       --geopm-period "__GEOPM_PERIOD__" \
+       --run-tag "${RUN_TAG}" \
+       --summary-csv "${SUMMARY_CSV}")
+[[ "__GEOPM_MONITOR__"  == "1" ]] && SWEEP+=(--geopm-monitor)
+[[ "__APPLY_CONTROLS__" == "1" ]] && SWEEP+=(--apply-controls)
+[[ -n "__MAX_CELLS__"        ]] && SWEEP+=(--max-cells "__MAX_CELLS__")
+[[ -n "__COMBO_BLOCKS__"     ]] && SWEEP+=(--combo-blocks "__COMBO_BLOCKS__")
+
+echo "[$(date)] host=$(hostname) bench=${BENCH} run_tag=${RUN_TAG}"
+"${SWEEP[@]}"
+EOF
+
+substitute() {
+    local bench="${1}" run_tag="${2}" summary_csv="${3}"
+    local out="${REMOTE_TEMPLATE}"
+    out="${out//__PBS_O_WORKDIR__/${PBS_O_WORKDIR}}"
+    out="${out//__AURORA_ONEAPI_MODULE__/${AURORA_ONEAPI_MODULE}}"
+    out="${out//__AURORA_PYTHON_MODULE__/${AURORA_PYTHON_MODULE}}"
+    out="${out//__AURORA_MPICH_MODULE__/${AURORA_MPICH_MODULE}}"
+    out="${out//__GEOPM_MODULE__/${GEOPM_MODULE}}"
+    out="${out//__GEOPM_PY_MODULE__/${GEOPM_PY_MODULE}}"
+    out="${out//__GEOPM_SESSION_MODULE__/${GEOPM_SESSION_MODULE}}"
+    out="${out//__GEOPM_LAUNCHER__/${GEOPM_LAUNCHER}}"
+    out="${out//__COMBOS_FILE__/${COMBOS_FILE}}"
+    out="${out//__VARIANT__/${VARIANT}}"
+    out="${out//__REPEATS__/${REPEATS}}"
+    out="${out//__GEOPM_PERIOD__/${GEOPM_PERIOD}}"
+    out="${out//__GEOPM_MONITOR__/${GEOPM_MONITOR}}"
+    out="${out//__APPLY_CONTROLS__/${APPLY_CONTROLS}}"
+    out="${out//__MAX_CELLS__/${MAX_CELLS}}"
+    out="${out//__COMBO_BLOCKS__/${COMBO_BLOCKS}}"
+    out="${out//__BENCH__/${bench}}"
+    out="${out//__RUN_TAG__/${run_tag}}"
+    out="${out//__SUMMARY_CSV__/${summary_csv}}"
+    echo "${out}"
+}
+
+: "${SSH_BATCH:=64}"
+PIDS=()
+DISPATCHED=0
+
+echo
+echo "Dispatching ${EXPECTED_NODES} per-node sweeps in batches of ${SSH_BATCH}..."
+for ((R=0; R<EXPECTED_NODES; R++)); do
+    if (( R >= ${#NODES[@]} )); then
+        echo "  rank ${R}: no node available" >&2
+        continue
+    fi
+    B_IDX=$(( R / NODES_PER_BENCH ))
+    BENCH="${BENCHES[${B_IDX}]}"
+    NODE="${NODES[${R}]}"
+    TAG_ID="$(printf '%03d' ${R})"
+    RUN_TAG="${JOB_TAG_SHORT}_n${TAG_ID}"
+    SUMMARY_CSV="${PER_NODE_DIR}/${BENCH}_${RUN_TAG}.csv"
+    LOG_OUT="${PER_NODE_LOGS}/${BENCH}_${RUN_TAG}.stdout"
+    LOG_ERR="${PER_NODE_LOGS}/${BENCH}_${RUN_TAG}.stderr"
+
+    REMOTE_SCRIPT="$(substitute "${BENCH}" "${RUN_TAG}" "${SUMMARY_CSV}")"
+
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${NODE}" "bash -l -s" \
+        <<< "${REMOTE_SCRIPT}" > "${LOG_OUT}" 2> "${LOG_ERR}" &
+    PIDS+=("$!:${R}:${BENCH}:${NODE}")
+    DISPATCHED=$(( DISPATCHED + 1 ))
+
+    if (( (R + 1) % SSH_BATCH == 0 )); then
+        sleep 2
+    fi
+done
+echo "All ${DISPATCHED} per-node sweeps dispatched at $(date). Waiting..."
+
+declare -A RC=()
+FAILED=0
+DONE=0
+for entry in "${PIDS[@]}"; do
+    pid="${entry%%:*}"; rest="${entry#*:}"
+    rank="${rest%%:*}"; rest="${rest#*:}"
+    bench="${rest%%:*}"; node="${rest#*:}"
+    if wait "${pid}"; then
+        RC["${rank}"]=0
+    else
+        RC["${rank}"]=$?
+        FAILED=$(( FAILED + 1 ))
+        echo "[fail] rank ${rank} bench=${bench} node=${node} rc=${RC[${rank}]}"
+    fi
+    DONE=$(( DONE + 1 ))
+    if (( DONE % 25 == 0 )); then
+        echo "  [progress] ${DONE}/${DISPATCHED} finished at $(date)"
+    fi
+done
+echo "All ${DISPATCHED} per-node sweeps finished at $(date). Failed: ${FAILED}"
+
+## Merge per-node summary CSVs into per-bench aggregates
+echo
+echo "Merging per-node summary CSVs..."
+for BENCH in "${BENCHES[@]}"; do
+    AGG="${RUN_DIR}/${BENCH}_aggregated.csv"
+    HEADER_DONE=0
+    N=0
+    for SUMMARY in "${PER_NODE_DIR}/${BENCH}_${JOB_TAG_SHORT}"_n*.csv; do
+        [[ ! -f "${SUMMARY}" ]] && continue
+        if (( HEADER_DONE == 0 )); then
+            head -n 1 "${SUMMARY}" > "${AGG}"
+            HEADER_DONE=1
+        fi
+        tail -n +2 "${SUMMARY}" >> "${AGG}"
+        N=$(( N + 1 ))
+    done
+    if (( HEADER_DONE == 1 )); then
+        ROWS=$(( $(wc -l < "${AGG}") - 1 ))
+        echo "  ${BENCH}: merged ${N} per-node files -> ${AGG}  (${ROWS} cell rows)"
+    else
+        echo "  ${BENCH}: no per-node CSVs found"
+    fi
+done
+
+## Campaign-wide combined CSV
+COMBINED="${RUN_DIR}/all_benches_aggregated.csv"
+HEADER_DONE=0
+for BENCH in "${BENCHES[@]}"; do
+    AGG="${RUN_DIR}/${BENCH}_aggregated.csv"
+    [[ ! -f "${AGG}" ]] && continue
+    if (( HEADER_DONE == 0 )); then
+        head -n 1 "${AGG}" > "${COMBINED}"
+        HEADER_DONE=1
+    fi
+    tail -n +2 "${AGG}" >> "${COMBINED}"
+done
+[[ -f "${COMBINED}" ]] && echo "  combined: $(( $(wc -l < "${COMBINED}") - 1 )) rows -> ${COMBINED}"
+
+echo
+echo "Job completed at $(date)"
+exit "${FAILED}"

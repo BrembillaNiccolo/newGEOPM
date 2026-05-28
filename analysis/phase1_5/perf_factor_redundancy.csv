@@ -1,0 +1,15 @@
+benchmark,gpu_freq_ghz,pf0_n,pf1_n,pf0_energy_j,pf1_energy_j,diff_pct,verdict
+babelstream,0.4,90,90,53674.6,52039.9,-3.0,marginal
+babelstream,1.6,85,76,35068.5,36157.1,+3.1,marginal
+cpu-dgemm,0.4,90,90,11231.4,10050.1,-10.5,PF MATTERS
+cpu-dgemm,1.6,90,90,12135.1,11069.8,-8.8,PF MATTERS
+dgemm-gpu,0.4,90,74,81886.9,83031.1,+1.4,redundant
+dgemm-gpu,1.6,51,20,45438.2,51884.9,+14.2,PF MATTERS
+gpu-bursty-idle,0.4,90,89,32390.2,25321.3,-21.8,PF MATTERS
+gpu-bursty-idle,1.6,82,67,31183.7,27412.5,-12.1,PF MATTERS
+mpi-idle-wait,0.4,90,90,12185.5,9876.7,-18.9,PF MATTERS
+mpi-idle-wait,1.6,90,90,11015.4,10310.6,-6.4,PF MATTERS
+osu,0.4,79,69,16890.0,15359.3,-9.1,PF MATTERS
+osu,1.6,55,37,17072.6,15955.5,-6.5,PF MATTERS
+stream,0.4,90,90,9743.8,8228.1,-15.6,PF MATTERS
+stream,1.6,90,90,9891.5,9189.1,-7.1,PF MATTERS
