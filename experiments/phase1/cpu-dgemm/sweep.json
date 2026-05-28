@@ -1,7 +1,9 @@
 {
   "benchmark": "cpu-dgemm",
   "description": "Phase 1 cpu-dgemm characterization sweep. All strict knobs flipped, 15 s cells, repeats=1.",
-  "variants": ["smoke_15s"],
+  "variants": [
+    "all_tiles_15s"
+  ],
   "repeats": 1,
   "runtime_slack": 0.05,
   "include_knobs": "../strict_knobs.json"

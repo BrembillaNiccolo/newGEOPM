@@ -1,0 +1,290 @@
+#!/bin/bash -l
+# Phase-0 strict-knob sweep on Aurora `prod` queue: 350 nodes = 7 benches x
+# 50 INDEPENDENT REPEATS per bench. Each node runs the full sweep (~71 cells)
+# in isolation, writing per-node cell dirs and a per-node summary CSV; the
+# PBS job merges all per-node CSVs into one aggregate per bench at the end.
+#
+# Layout (one submission):
+#   results/<JOBID>/per_node_summaries/<bench>_n<rank>.csv     (one per node)
+#   results/<JOBID>/<bench>_aggregated.csv                     (merged per bench)
+#   experiments/phase1/<bench>/runs/<JOBID>_n<rank>/...        (per-cell data)
+#
+# Why this differs from submit_phase0_all_repeat.sh:
+#   - the repeat-loop script does N sequential PBS submissions of 7 nodes each.
+#     This script does 1 PBS submission of 350 nodes, all running in parallel.
+#   - Wall time per node is roughly the same (~25 min) but the whole campaign
+#     completes in one PBS job instead of N sequential ones.
+#   - Per-node RUN_TAG (job_id + rank) prevents file-write collisions.
+
+#PBS -A UIC-HPC
+#PBS -q prod
+#PBS -l select=350
+#PBS -l place=scatter
+#PBS -l walltime=06:00:00
+#PBS -l filesystems=home:flare
+#PBS -N geopm_phase0_prod
+#PBS -k doe
+#PBS -j oe
+# NOTE: walltime is 6 h (prod max). Default VARIANT below is all_tiles_45s
+# (3x the per-cell work of all_tiles_15s) so we get richer per-cell telemetry.
+# Per-node budget: ~72 cells x ~55 s avg = ~66 min nominal, up to ~2 h if many
+# cap-bound cells slow down 3-4x. 6 h walltime gives ~3x margin over the worst
+# observed bench (osu at lit_2000W).
+
+set -euo pipefail
+
+if [[ -z "${PBS_O_WORKDIR:-}" ]]; then
+    echo "ERROR: PBS_O_WORKDIR is not set; submit via qsub." >&2
+    exit 2
+fi
+cd "${PBS_O_WORKDIR}"
+
+## qsub -v overrides
+: "${VARIANT:=all_tiles_45s}"
+: "${APPLY_CONTROLS:=1}"
+: "${GEOPM_MONITOR:=1}"
+: "${GEOPM_PERIOD:=0.05}"
+: "${MAX_CELLS:=}"
+: "${BENCH_LIST:=cpu-dgemm,stream,dgemm-gpu,babelstream,osu,mpi-idle-wait,gpu-bursty-idle}"
+: "${NODES_PER_BENCH:=50}"
+: "${GEOPM_LAUNCHER:=pals}"
+
+## Aurora module overrides (Stack B).
+: "${AURORA_ONEAPI_MODULE:=oneapi/release/2025.3.1}"
+: "${AURORA_PYTHON_MODULE:=python/3.12.12}"
+: "${AURORA_MPICH_MODULE:=mpich/opt/5.0.0.aurora_test.3c70a61}"
+: "${GEOPM_MODULE:=libgeopm/3.2.2}"
+: "${GEOPM_PY_MODULE:=py-geopmpy/3.2.2}"
+: "${GEOPM_SESSION_MODULE:=py-geopmdpy/3.2.2}"
+
+IFS=',' read -r -a BENCHES <<< "${BENCH_LIST}"
+NBENCH=${#BENCHES[@]}
+EXPECTED_NODES=$(( NBENCH * NODES_PER_BENCH ))
+
+JOB_TAG="${PBS_JOBID:-manual_$(date +%Y%m%d_%H%M%S)}"
+JOB_TAG_SHORT="${JOB_TAG%%.*}"
+RUN_DIR="${PBS_O_WORKDIR}/results/${JOB_TAG_SHORT}"
+PER_NODE_DIR="${RUN_DIR}/per_node_summaries"
+PER_NODE_LOGS="${RUN_DIR}/per_node_logs"
+mkdir -p "${PER_NODE_DIR}" "${PER_NODE_LOGS}"
+
+exec > >(tee -a "${RUN_DIR}/job.stdout") 2> >(tee -a "${RUN_DIR}/job.stderr" >&2)
+
+echo "Job started at $(date)"
+echo "PBS_JOBID=${PBS_JOBID:-unset}  JOB_TAG_SHORT=${JOB_TAG_SHORT}"
+echo "PBS_O_WORKDIR=${PBS_O_WORKDIR}"
+echo "RUN_DIR=${RUN_DIR}"
+echo "BENCHES (${NBENCH}): ${BENCHES[*]}"
+echo "NODES_PER_BENCH=${NODES_PER_BENCH}  expected_nodes=${EXPECTED_NODES}"
+echo "VARIANT=${VARIANT} APPLY_CONTROLS=${APPLY_CONTROLS} GEOPM_MONITOR=${GEOPM_MONITOR}"
+echo "GEOPM_PERIOD=${GEOPM_PERIOD}  MAX_CELLS=${MAX_CELLS:-<unset>}"
+
+if [[ -z "${PBS_NODEFILE:-}" || ! -f "${PBS_NODEFILE}" ]]; then
+    echo "ERROR: PBS_NODEFILE not available; cannot dispatch." >&2
+    exit 3
+fi
+mapfile -t NODES < <(sort -u "${PBS_NODEFILE}")
+echo "Allocated unique nodes: ${#NODES[@]}"
+if (( ${#NODES[@]} < EXPECTED_NODES )); then
+    echo "WARNING: only ${#NODES[@]} nodes for ${EXPECTED_NODES} expected; trailing ranks will be skipped." >&2
+fi
+
+# Per-rank assignment table for the log (only first 20 to keep log tidy)
+echo
+echo "Rank assignment plan (first 20 of ${EXPECTED_NODES}; rank -> bench / node):"
+SHOW_LIMIT=20
+for ((R=0; R<EXPECTED_NODES; R++)); do
+    if (( R >= ${#NODES[@]} )); then break; fi
+    if (( R >= SHOW_LIMIT )); then break; fi   # avoid piping a long loop into head (SIGPIPE!)
+    B_IDX=$(( R / NODES_PER_BENCH ))
+    BENCH="${BENCHES[${B_IDX}]}"
+    NODE="${NODES[${R}]}"
+    printf '  rank %3d  %-18s  %s\n' "${R}" "${BENCH}" "${NODE}"
+done
+if (( EXPECTED_NODES > SHOW_LIMIT )); then
+    echo "  ... ${EXPECTED_NODES} ranks total; full assignment in dispatch log below"
+fi
+
+## Build the remote script template (substituted per rank).
+## Critical design: each rank writes its summary CSV to a UNIQUE path and its
+## cell directories to a UNIQUE run-tag, so 50 nodes per bench never collide.
+read -r -d '' REMOTE_TEMPLATE <<'EOF' || true
+set -euo pipefail
+cd "__PBS_O_WORKDIR__"
+
+# Bring `module` into scope (login shells on compute nodes don't always have it)
+if ! type module >/dev/null 2>&1; then
+    for init in /etc/profile.d/modules.sh /usr/share/lmod/lmod/init/bash; do
+        [[ -r "$init" ]] && source "$init" && break
+    done
+fi
+[[ -d /soft/modulefiles ]] && module use /soft/modulefiles >/dev/null 2>&1 || true
+
+module load __AURORA_ONEAPI_MODULE__
+module load __AURORA_PYTHON_MODULE__
+module load __AURORA_MPICH_MODULE__
+module load __GEOPM_MODULE__
+module load __GEOPM_PY_MODULE__   2>/dev/null || true
+module load __GEOPM_SESSION_MODULE__ 2>/dev/null || true
+hash -r
+
+export ZES_ENABLE_SYSMAN=1
+export GEOPM_LAUNCHER=__GEOPM_LAUNCHER__
+
+BENCH="__BENCH__"
+RUN_TAG="__RUN_TAG__"
+SUMMARY_CSV="__SUMMARY_CSV__"
+
+SWEEP=(scripts/run_phase0_sweep.sh "${BENCH}" --variant "__VARIANT__" --geopm-period "__GEOPM_PERIOD__" --run-tag "${RUN_TAG}" --summary-csv "${SUMMARY_CSV}")
+[[ "__GEOPM_MONITOR__"   == "1" ]] && SWEEP+=(--geopm-monitor)
+[[ "__APPLY_CONTROLS__"  == "1" ]] && SWEEP+=(--apply-controls)
+[[ -n "__MAX_CELLS__"       ]] && SWEEP+=(--max-cells "__MAX_CELLS__")
+
+echo "[$(date)] host=$(hostname) bench=${BENCH} run_tag=${RUN_TAG}"
+echo "[$(date)] summary=${SUMMARY_CSV}"
+echo "[$(date)] cmd: ${SWEEP[*]}"
+"${SWEEP[@]}"
+EOF
+
+substitute() {
+    local bench="${1}" run_tag="${2}" summary_csv="${3}"
+    local out="${REMOTE_TEMPLATE}"
+    out="${out//__PBS_O_WORKDIR__/${PBS_O_WORKDIR}}"
+    out="${out//__AURORA_ONEAPI_MODULE__/${AURORA_ONEAPI_MODULE}}"
+    out="${out//__AURORA_PYTHON_MODULE__/${AURORA_PYTHON_MODULE}}"
+    out="${out//__AURORA_MPICH_MODULE__/${AURORA_MPICH_MODULE}}"
+    out="${out//__GEOPM_MODULE__/${GEOPM_MODULE}}"
+    out="${out//__GEOPM_PY_MODULE__/${GEOPM_PY_MODULE}}"
+    out="${out//__GEOPM_SESSION_MODULE__/${GEOPM_SESSION_MODULE}}"
+    out="${out//__GEOPM_LAUNCHER__/${GEOPM_LAUNCHER}}"
+    out="${out//__VARIANT__/${VARIANT}}"
+    out="${out//__GEOPM_PERIOD__/${GEOPM_PERIOD}}"
+    out="${out//__GEOPM_MONITOR__/${GEOPM_MONITOR}}"
+    out="${out//__APPLY_CONTROLS__/${APPLY_CONTROLS}}"
+    out="${out//__MAX_CELLS__/${MAX_CELLS}}"
+    out="${out//__BENCH__/${bench}}"
+    out="${out//__RUN_TAG__/${run_tag}}"
+    out="${out//__SUMMARY_CSV__/${summary_csv}}"
+    echo "${out}"
+}
+
+## Dispatch one ssh job per rank, in batches to avoid overwhelming the head node
+## (Aurora copes well with ~64 concurrent ssh; keep batches modest).
+: "${SSH_BATCH:=64}"
+PIDS=()
+DISPATCHED=0
+
+dispatch_rank() {
+    local rank="${1}"
+    if (( rank >= ${#NODES[@]} )); then
+        echo "  rank ${rank}: no node available" >&2
+        return
+    fi
+    local b_idx=$(( rank / NODES_PER_BENCH ))
+    local bench="${BENCHES[${b_idx}]}"
+    local node="${NODES[${rank}]}"
+    local tag_id="$(printf '%03d' ${rank})"
+    local run_tag="${JOB_TAG_SHORT}_n${tag_id}"
+    local summary_csv="${PER_NODE_DIR}/${bench}_${run_tag}.csv"
+    local log_out="${PER_NODE_LOGS}/${bench}_${run_tag}.stdout"
+    local log_err="${PER_NODE_LOGS}/${bench}_${run_tag}.stderr"
+
+    local remote_script
+    remote_script="$(substitute "${bench}" "${run_tag}" "${summary_csv}")"
+
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${node}" "bash -l -s" \
+        <<< "${remote_script}" > "${log_out}" 2> "${log_err}" &
+    PIDS+=("$!:${rank}:${bench}:${node}")
+    DISPATCHED=$(( DISPATCHED + 1 ))
+}
+
+echo
+echo "Dispatching ${EXPECTED_NODES} per-node sweeps in batches of ${SSH_BATCH}..."
+for ((R=0; R<EXPECTED_NODES; R++)); do
+    dispatch_rank "${R}"
+    # Throttle: when batch full, wait for SOME to free up before queuing more.
+    # We don't strict-wait every batch; just drain when SSH_BATCH new dispatches have piled up.
+    if (( (R + 1) % SSH_BATCH == 0 )); then
+        echo "  [${R}+1] dispatched ${SSH_BATCH}; brief pause to let ssh handshakes settle..."
+        sleep 2
+    fi
+done
+echo "All ${DISPATCHED} per-node sweeps dispatched at $(date)."
+echo "Waiting for all to finish..."
+
+declare -A RC=()
+FAILED=0
+DONE=0
+for entry in "${PIDS[@]}"; do
+    pid="${entry%%:*}"; rest="${entry#*:}"
+    rank="${rest%%:*}"; rest="${rest#*:}"
+    bench="${rest%%:*}"; node="${rest#*:}"
+    if wait "${pid}"; then
+        RC["${rank}"]=0
+    else
+        RC["${rank}"]=$?
+        FAILED=$(( FAILED + 1 ))
+        echo "[fail] rank ${rank} bench=${bench} node=${node} rc=${RC[${rank}]}"
+    fi
+    DONE=$(( DONE + 1 ))
+    if (( DONE % 50 == 0 )); then
+        echo "  [progress] ${DONE}/${DISPATCHED} finished at $(date)"
+    fi
+done
+echo "All ${DISPATCHED} per-node sweeps finished at $(date). Failed: ${FAILED}"
+
+## Merge per-node summary CSVs into per-bench aggregates
+echo
+echo "Merging per-node summary CSVs..."
+for BENCH in "${BENCHES[@]}"; do
+    AGG="${RUN_DIR}/${BENCH}_aggregated.csv"
+    HEADER_DONE=0
+    N=0
+    for SUMMARY in "${PER_NODE_DIR}/${BENCH}_${JOB_TAG_SHORT}"_n*.csv; do
+        [[ ! -f "${SUMMARY}" ]] && continue
+        if (( HEADER_DONE == 0 )); then
+            head -n 1 "${SUMMARY}" > "${AGG}"
+            HEADER_DONE=1
+        fi
+        tail -n +2 "${SUMMARY}" >> "${AGG}"
+        N=$(( N + 1 ))
+    done
+    if (( HEADER_DONE == 1 )); then
+        ROWS=$(( $(wc -l < "${AGG}") - 1 ))
+        echo "  ${BENCH}: merged ${N} per-node files -> ${AGG}  (${ROWS} cell rows)"
+    else
+        echo "  ${BENCH}: no per-node CSVs found"
+    fi
+done
+
+## Build a campaign-wide combined CSV (all benches together)
+COMBINED="${RUN_DIR}/all_benches_aggregated.csv"
+HEADER_DONE=0
+for BENCH in "${BENCHES[@]}"; do
+    AGG="${RUN_DIR}/${BENCH}_aggregated.csv"
+    [[ ! -f "${AGG}" ]] && continue
+    if (( HEADER_DONE == 0 )); then
+        head -n 1 "${AGG}" > "${COMBINED}"
+        HEADER_DONE=1
+    fi
+    tail -n +2 "${AGG}" >> "${COMBINED}"
+done
+if (( HEADER_DONE == 1 )); then
+    echo "  combined: $(( $(wc -l < "${COMBINED}") - 1 )) rows -> ${COMBINED}"
+fi
+
+echo
+echo "Per-bench rc summary:"
+for BENCH in "${BENCHES[@]}"; do
+    OK=0; BAD=0
+    for entry in "${PIDS[@]}"; do
+        rest="${entry#*:}"; rank="${rest%%:*}"; rest="${rest#*:}"; eb="${rest%%:*}"
+        [[ "${eb}" != "${BENCH}" ]] && continue
+        if (( RC[${rank}] == 0 )); then OK=$(( OK + 1 )); else BAD=$(( BAD + 1 )); fi
+    done
+    printf '  %-18s ok=%3d  fail=%3d\n' "${BENCH}" "${OK}" "${BAD}"
+done
+
+echo
+echo "Job completed at $(date)"
+exit "${FAILED}"

@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-: "${REPEATS:=5}"
+: "${REPEATS:=10}"
 : "${QUEUE:=debug-scaling}"
 : "${ACCOUNT:=UIC-HPC}"
 : "${WALLTIME:=01:00:00}"

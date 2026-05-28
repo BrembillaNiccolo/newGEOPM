@@ -73,11 +73,64 @@ def format_command(tokens):
     return " ".join(shlex.quote(token) for token in tokens)
 
 
+_domain_count_cache: Dict[str, int] = {}
+
+
+def _discover_domain_counts_from_geopm() -> Dict[str, int]:
+    """Ask `geopmread --domain` for the real per-domain instance counts.
+
+    Output format example:
+        board                     1
+        package                   2
+        core                    104
+        cpu                     208
+        gpu                       6
+        gpu_chip                 12
+    """
+    invocation = geopm_tool_invocation("geopmread") if "geopm_tool_invocation" in globals() else None
+    if invocation is None:
+        invocation = ["geopmread"]  # best-effort
+    try:
+        proc = subprocess.run(
+            invocation + ["--domain"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=10, check=False,
+        )
+        if proc.returncode != 0:
+            return {}
+        result = {}
+        for line in proc.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) == 2 and parts[1].isdigit():
+                result[parts[0]] = int(parts[1])
+        return result
+    except Exception:
+        return {}
+
+
 def domain_count(domain: str) -> int:
+    # 1) explicit env override always wins
     env_name = DOMAIN_COUNT_ENV.get(domain)
     if env_name and os.environ.get(env_name):
         return int(os.environ[env_name])
-    return DOMAIN_COUNT_DEFAULT.get(domain, 1)
+    # 2) cached geopmread --domain result
+    if not _domain_count_cache:
+        _domain_count_cache.update(_discover_domain_counts_from_geopm())
+    if domain in _domain_count_cache:
+        return _domain_count_cache[domain]
+    # 3) static fallbacks (Aurora-shaped). NOTE: "core" used to fall back to
+    #    os.cpu_count() which returns logical CPUs (208 on Xeon Max with HT),
+    #    causing geopmread to fail on core 104+. We now divide cpu by 2 as
+    #    a "probably right" heuristic when both geopmread and the env var are
+    #    unavailable.
+    cpu_n = max(1, os.cpu_count() or 1)
+    fallback = {
+        "board": 1, "package": 2,
+        "cpu": cpu_n,
+        "core": cpu_n // 2,    # assume 2-way SMT; better than 208 cores
+        "gpu": 6, "gpu_chip": 12,
+    }
+    return fallback.get(domain, DOMAIN_COUNT_DEFAULT.get(domain, 1))
 
 
 def instances_for(knob):
@@ -174,13 +227,79 @@ class GeopmControlSession:
         require_tool("geopmwrite")
 
         writes = []  # type: List[Dict[str, Any]]
+        errors = []  # type: List[Dict[str, Any]]
+        min_floor_writes = []  # type: List[Dict[str, Any]]
+
+        # If the knob declares a min_control, drop that MIN_CONTROL to its floor
+        # across all instances BEFORE writing MAX. Otherwise MAX writes below the
+        # current MIN are silently clamped by the driver (verified on Aurora:
+        # GPU_CORE_FREQUENCY_MIN_CONTROL pinned MAX writes < 1.5 GHz to 1.5 GHz).
+        # Originals are pushed onto restore_values so the cleanup pass restores
+        # MAX first (LIFO), then MIN -- the correct order to avoid the inverse
+        # clamping problem on restore.
+        min_ctl_info = knob.get("min_control")
+        if min_ctl_info:
+            min_consecutive_failures = 0
+            for instance in instances_for(knob):
+                try:
+                    orig_min = geopm_read(min_ctl_info["name"], knob["domain"], instance)
+                except Exception as exc:
+                    errors.append({"instance": instance, "phase": "read_min_original",
+                                   "min_ctl": min_ctl_info["name"], "error": str(exc)[:200]})
+                    min_consecutive_failures += 1
+                    if min_consecutive_failures >= 2:
+                        break
+                    continue
+                min_consecutive_failures = 0
+                try:
+                    geopm_write(min_ctl_info["name"], knob["domain"], instance,
+                                float(min_ctl_info["floor_value"]))
+                except Exception as exc:
+                    errors.append({"instance": instance, "phase": "write_min_floor",
+                                   "min_ctl": min_ctl_info["name"], "error": str(exc)[:200]})
+                    continue
+                self.restore_values.append({
+                    "name": min_ctl_info["name"],
+                    "domain": knob["domain"],
+                    "instance": instance,
+                    "value": orig_min,
+                })
+                min_floor_writes.append({
+                    "domain": knob["domain"],
+                    "instance": instance,
+                    "min_ctl": min_ctl_info["name"],
+                    "floor": float(min_ctl_info["floor_value"]),
+                    "orig_min": orig_min,
+                })
+
+        consecutive_failures = 0
         for instance in instances_for(knob):
-            original = geopm_read(knob["name"], knob["domain"], instance)
-            value = setting_for_level(level, knob, instance)
+            # Per-instance try/except: if e.g. core 104 doesn't exist, log + break.
+            # Without this, the first invalid instance kills the whole sweep at
+            # this knob and every subsequent knob in sweep.json never runs.
+            try:
+                original = geopm_read(knob["name"], knob["domain"], instance)
+            except Exception as exc:
+                errors.append({"instance": instance, "phase": "read_original", "error": str(exc)[:200]})
+                consecutive_failures += 1
+                # Assume contiguous 0..N-1 indexing: 2 in a row means we're past N.
+                if consecutive_failures >= 2:
+                    break
+                continue
+            consecutive_failures = 0
+            try:
+                value = setting_for_level(level, knob, instance)
+            except Exception as exc:
+                errors.append({"instance": instance, "phase": "setting_for_level", "error": str(exc)[:200]})
+                continue
             if value is None:
                 continue
-            geopm_write(knob["name"], knob["domain"], instance, value)
-            readback = geopm_read(knob["name"], knob["domain"], instance)
+            try:
+                geopm_write(knob["name"], knob["domain"], instance, value)
+                readback = geopm_read(knob["name"], knob["domain"], instance)
+            except Exception as exc:
+                errors.append({"instance": instance, "phase": "write_or_readback", "error": str(exc)[:200]})
+                continue
             self.restore_values.append({
                 "name": knob["name"],
                 "domain": knob["domain"],
@@ -193,7 +312,13 @@ class GeopmControlSession:
                 "requested": value,
                 "readback": readback,
             })
-        self.write_log.append({"knob": knob["name"], "level": level["label"], "writes": writes})
+        entry = {"knob": knob["name"], "level": level["label"], "writes": writes}
+        if min_floor_writes:
+            entry["min_floor_writes"] = min_floor_writes
+        if errors:
+            entry["errors"] = errors[:10]  # cap log size
+            entry["n_errors"] = len(errors)
+        self.write_log.append(entry)
 
     def restore(self):
         restored = []  # type: List[Dict[str, Any]]
