@@ -1,0 +1,101 @@
+{
+  "_description": "Default arm set for AuroraBanditAgent. Mirrors the hardcoded grid in ActionGrid::load_default(). Each arm = a partial setting of GEOPM controls; unspecified knobs are left at the previous tick's value. Originally derived from Phase 0 winners per workload class (see analysis/agent_suggestions.md §3); revised after Phase 1.5 Block A validation (see analysis/phase1_5/results.md).",
+  "_phase1_5_changes": "A2 gpu_compute_max: CPU/UNCORE raised to MAX (was 2.0/1.6 GHz). Reason: GPU-active benches still need CPU at MAX for kernel dispatch — the old A2 added +27% runtime on dgemm-gpu. A6 bursty_gpu_idle: marked _inactive (dominated by A4 on every safe-class bench in Phase 1.5 data; reactivate after Phase 1.5b runs Block C/D/E).",
+  "_phase1_5b_findings": "Block B (CPU × GPU 3×3) confirms ADDITIVITY on 5/7 benches; small synergy on osu, small antagonism on stream. Agent grid is validated as-is — no new arms needed. Block C partial: cpu-dgemm has a compound bottleneck on (CPU=1.0 + UNCORE=0.8) — same pattern as A4/A7. The agent's runtime guard now penalizes BOTH A4 and A7 when cpu_power_frac > 0.5.",
+  "_phase1_5c_findings": "Block C COMPLETE (5/7 benches ADDITIVE on CPU×UNCORE). Block D nearly complete (PERF_FACTOR NOT redundant — PF=1 saves 6-22% more energy on most benches at GPU=0.4 GHz, BUT PF=1 HURTS dgemm-gpu at GPU=MAX with +14% energy and +21% runtime). PF settings flipped: A2 gpu_compute_max changed from PF=1.0 to PF=0.0 (memory-bias feeds compute on GPU-active workloads); A4/A5/A7 changed from PF=0.0 to PF=1.0 (compute-bias is better when GPU is capped low because it minimizes idle-clock dither). A1 memory_bound_save kept at PF=0.0 (Block D shows marginal effect on stream/babelstream).",
+  "_phase1_5d_findings": "Block E (CPU×CPU_POWER_LIMIT) shows CPU_PL IS REDUNDANT with CPU_FREQ_MAX on 5/6 benches when CPU is already capped at 1.0 GHz (|diff| ≤ 1.7%). Sixth bench (cpu-dgemm) sees +338% energy from adding PL=175W on top — A4/A7 weren't safe on cpu-dgemm anyway. CPU_POWER_LIMIT_CONTROL writes DROPPED from A4 (was 175W) and A7 (was 105W). Net effect: simpler arms, same energy savings on target classes, no catastrophic interaction risk.",
+  "_units": {
+    "*_FREQUENCY_MAX_CONTROL": "Hz",
+    "*_POWER_LIMIT_CONTROL": "W",
+    "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": "0..1"
+  },
+  "arms": [
+    {
+      "name": "all_max",
+      "class_hint": "unknown",
+      "controls": {}
+    },
+    {
+      "name": "memory_bound_save",
+      "class_hint": "memory_bound",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         1.0e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  2.3e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    0.4e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 0.0
+      }
+    },
+    {
+      "name": "gpu_compute_max",
+      "class_hint": "gpu_compute",
+      "_phase1_5_note": "CPU/UNCORE were 2.0/1.6 GHz; raised to MAX after Phase 1.5 showed +27% runtime on dgemm-gpu. GPU benches still need CPU at MAX for kernel dispatch over MPI.",
+      "_phase1_5c_note": "PERF_FACTOR was 1.0; changed to 0.0. Block D showed PF=1 at GPU=MAX HURTS dgemm-gpu by +14% energy and +21% runtime — PF=0 (memory-bias) feeds the compute units instead of starving them. With PF=0 + everything at MAX, A2 is now barely distinct from A0 (only the explicit PF setting differs) — keep for traceability and as a hedge.",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         3.5e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  2.3e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    1.6e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 0.0
+      }
+    },
+    {
+      "name": "cpu_compute_uncore_save",
+      "class_hint": "cpu_compute",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         3.5e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  1.2e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    0.4e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 0.25
+      }
+    },
+    {
+      "name": "comm_wait_save",
+      "class_hint": "comm_wait",
+      "_phase1_5c_note": "PERF_FACTOR was 0.0; changed to 1.0. Block D showed PF=1 at GPU=0.4 GHz saves 19% MORE energy on mpi-idle-wait (the bench this arm targets). Mechanism: PF=1 keeps the small amount of GPU work at high clock, finishes faster, more time in deep idle.",
+      "_phase1_5d_note": "CPU_POWER_LIMIT_CONTROL=175W was dropped. Block E showed PL is redundant with CPU_FREQ=1.0 GHz on 5/6 benches (≤1.7% diff) and CATASTROPHIC on cpu-dgemm (+338% energy from PL alone). Removing the write makes the arm simpler and removes the cpu-dgemm risk.",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         1.0e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  0.8e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    0.4e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 1.0
+      }
+    },
+    {
+      "name": "comm_collective_safe",
+      "class_hint": "comm_collective",
+      "_phase1_5_note": "UNIVERSAL SAFE ARM — Phase 1.5 showed −13 to −28% energy on 5 of 7 benches at <5% runtime cost (only fails on babelstream/dgemm-gpu where all arms fail). Use as the cold-start default in always-on mode; demote A0 (all_max) to safety-fallback only.",
+      "_phase1_5c_note": "PERF_FACTOR was 0.0; changed to 1.0. Block D shows PF=1 at GPU=0.4 saves 9% MORE on osu and 16% MORE on stream — both targets of this arm.",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         3.5e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  2.3e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    0.4e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 1.0
+      }
+    },
+    {
+      "name": "bursty_gpu_idle",
+      "class_hint": "bursty",
+      "_inactive": true,
+      "_phase1_5_note": "Dominated by A4 (comm_wait_save) on every safe-class bench in Phase 1.5: gpu-bursty −43% vs −53%, mpi-idle −45% vs −70%. Kept in the JSON for Phase 1.5b reactivation when Block C/D/E data lands.",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         1.6e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  1.6e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    0.4e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 0.0
+      }
+    },
+    {
+      "name": "aggressive_save",
+      "class_hint": "aggressive",
+      "_phase1_5b_note": "Block C revealed compound bottleneck: (CPU=1.0 + UNCORE=0.8) gives +76% runtime on cpu-dgemm vs +38% predicted. Same family as A4. The agent's runtime guard penalizes A7 when cpu_power_frac > 0.5; explicitly avoid this arm on CPU-bound classes.",
+      "_phase1_5c_note": "PERF_FACTOR was 0.0; changed to 1.0 (same Block D rationale as A4/A5).",
+      "_phase1_5d_note": "CPU_POWER_LIMIT_CONTROL=105W KEPT. Block E only tested PL=175W (50% TDP) redundancy — it was redundant when CPU=1.0 GHz. PL=105W (30% TDP) is more aggressive and may still bind even at CPU=1.0 GHz, so we keep it pending direct test. This is also what distinguishes A7 from A4 (which has no PL write).",
+      "controls": {
+        "CPU_FREQUENCY_MAX_CONTROL":         1.0e9,
+        "CPU_UNCORE_FREQUENCY_MAX_CONTROL":  0.8e9,
+        "GPU_CORE_FREQUENCY_MAX_CONTROL":    0.4e9,
+        "LEVELZERO::GPU_CORE_PERFORMANCE_FACTOR_CONTROL": 1.0,
+        "CPU_POWER_LIMIT_CONTROL":           105.0
+      }
+    }
+  ]
+}
